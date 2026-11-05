@@ -368,8 +368,22 @@ pub fn clamp_params(def: &NodeDef, params: &mut BTreeMap<String, Value>) {
     for p in &def.params {
         let Some(v) = params.get_mut(p.id) else { continue };
         if let Value::Enum(i) = v {
-            if !p.options.is_empty() {
-                *i = (*i).min(u32::try_from(p.options.len() - 1).unwrap_or(u32::MAX));
+            let fallback = match &p.default {
+                Value::Enum(d) => *d,
+                _ => 0,
+            };
+            let bounds = if !p.options.is_empty() {
+                let hi = u32::try_from(p.options.len() - 1).unwrap_or(u32::MAX);
+                Some((0u32, hi))
+            } else if p.min.is_finite() && p.max.is_finite() && p.min <= p.max {
+                if p.min < 0.0 { None } else { Some((p.min as u32, p.max as u32)) }
+            } else {
+                None
+            };
+            match bounds {
+                Some((lo, hi)) if lo <= hi => *i = (*i).clamp(lo, hi),
+                Some(_) => *i = fallback,
+                None => *i = fallback,
             }
             continue;
         }
@@ -379,7 +393,17 @@ pub fn clamp_params(def: &NodeDef, params: &mut BTreeMap<String, Value>) {
             }
             continue;
         }
-        if p.min >= p.max {
+        if !p.min.is_finite() || !p.max.is_finite() || p.min > p.max {
+            // No usable range: fall back to the parameter default.
+            match (&mut *v, &p.default) {
+                (Value::Float(x), Value::Float(d)) => *x = *d,
+                (Value::Float2(a), Value::Float2(d)) => *a = *d,
+                (Value::Float3(a), Value::Float3(d)) => *a = *d,
+                (Value::Float4(a), Value::Float4(d)) => *a = *d,
+                (Value::Int(x), Value::Int(d)) => *x = *d,
+                (Value::Int2(a), Value::Int2(d)) => *a = *d,
+                _ => {}
+            }
             continue;
         }
         let span = p.max - p.min;
@@ -390,6 +414,9 @@ pub fn clamp_params(def: &NodeDef, params: &mut BTreeMap<String, Value>) {
             Value::Float2(d) => d.get(i).copied(),
             Value::Float3(d) => d.get(i).copied(),
             Value::Float4(d) => d.get(i).copied(),
+            Value::Int(d) => Some(*d as f32),
+            Value::Int2(d) => d.get(i).map(|x| *x as f32),
+            Value::Enum(d) => Some(*d as f32),
             _ => None,
         };
         let clamp_at = |x: &mut f32, i: usize| *x = clamp_finite(*x, lo, hi, fallback(i).unwrap_or(0.0));

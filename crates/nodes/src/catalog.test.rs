@@ -58,3 +58,25 @@ fn manual_values_beyond_slider_and_multiple_angle_turns_survive() {
         }
     }
 }
+
+#[test]
+fn clamp_params_bounds_enum_without_options() {
+    let mut def = find("splatter").unwrap().clone();
+    if let Some(p) = def.params.iter_mut().find(|p| p.id == "pattern") {
+        p.options = &[];
+        p.default = Value::Enum(0);
+        p.min = 0.0;
+        p.max = 0.0;
+    }
+    if let Some(p) = def.params.iter_mut().find(|p| p.id == "size") {
+        p.default = Value::Float(5.0);
+        p.min = 5.0;
+        p.max = 5.0;
+    }
+    let mut p = BTreeMap::new();
+    p.insert("pattern".into(), Value::Enum(999));
+    p.insert("size".into(), Value::Float(1e9));
+    clamp_params(&def, &mut p);
+    assert_eq!(p["pattern"], Value::Enum(0));
+    assert_eq!(p["size"], Value::Float(5.0));
+}
