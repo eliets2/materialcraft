@@ -353,6 +353,9 @@ fn graph_tree_hash(pkg: &Package, gi: usize) -> u64 {
         let Some(graph) = pkg.graphs.get(index) else { continue };
         index.hash(&mut h);
         serde_json::to_string(graph).unwrap_or_default().hash(&mut h);
+        for res in graph.input_images.values() {
+            pkg.resource(res).map(|r| r.bytes.content_hash()).hash(&mut h);
+        }
         for n in &graph.nodes {
             if let Some(Value::Text(name)) = n.params.get("resource") {
                 pkg.resource(name).map(|r| r.bytes.content_hash()).hash(&mut h);
@@ -998,5 +1001,34 @@ mod tests {
         let c = cook(&p, 0, &opts, &Mutex::new(Cache::default()));
         let v = c.image(blend, 0).unwrap().data[0];
         assert!((v - 17.0).abs() < 1e-4, "blend value {v}");
+    }
+
+    #[test]
+    fn bound_input_image_resource_change_recooks_instance() {
+        use materialcraft_core::{Resource, ResourceBytes};
+        use std::sync::atomic::AtomicU8;
+        let mut sub = Graph::new("sub");
+        sub.size = [4, 4];
+        let i = sub.add_node("input_grayscale", [0.0, 0.0]);
+        sub.node_mut(i).unwrap().params.insert("identifier".into(), Value::Text("in".into()));
+        let o = sub.add_node("output", [100.0, 0.0]);
+        sub.connect(i, "output", o, "input").unwrap();
+        sub.input_images.insert("in".into(), "curv".into());
+        let (top, inst) = instancing("top", "sub");
+        let mut p = Package::new("p");
+        p.graphs = vec![top, sub];
+        p.resources.push(Resource::new("curv", "curv.bin", ResourceBytes::new(vec![1; 100])));
+        // Stands in for decoding: the first byte picks the shade.
+        let shade = AtomicU8::new(1);
+        let res = |_: &str| Some(Image::filled(4, 4, Kind::Gray, [f32::from(shade.load(Ordering::Relaxed)) / 10.0; 4]));
+        let cache = Mutex::new(Cache::default());
+        let opts = Options::new(&res);
+        let first = cook(&p, 0, &opts, &cache);
+        assert!(first.nodes[&inst].error.is_none(), "{:?}", first.nodes[&inst].error);
+        assert!(!first.nodes[&inst].cached);
+        p.resources[0].bytes = ResourceBytes::new(vec![2; 100]);
+        shade.store(2, Ordering::Relaxed);
+        let second = cook(&p, 0, &opts, &cache);
+        assert!(!second.nodes[&inst].cached, "changing the bound input image resource must recook the instance");
     }
 }
