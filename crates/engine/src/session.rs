@@ -380,7 +380,7 @@ impl Session {
         self.redo.push(cur);
         self.restore(s);
         self.merge_key = None;
-        self.changed();
+        self.dirty = true;
         Some(label)
     }
 
@@ -392,7 +392,7 @@ impl Session {
         self.undo.push(cur);
         self.restore(s);
         self.merge_key = None;
-        self.changed();
+        self.dirty = true;
         Some(label)
     }
 

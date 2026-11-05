@@ -490,3 +490,15 @@ fn selected_wires_swap_their_sources_and_delete_together() {
     run(&mut s, "edit.undo", json!({}));
     assert_eq!(s.graph().unwrap().connections.len(), 4);
 }
+
+#[test]
+fn undo_to_unmodified_state_clears_modified_flag() {
+    let mut s = sample_session();
+    assert!(!s.modified);
+    run(&mut s, "graph.node.add", json!({"def": "clouds_1", "at": [0, 0]}));
+    assert!(s.modified);
+    run(&mut s, "edit.undo", json!({}));
+    assert!(!s.modified, "undoing to the unmodified state should clear the modified flag");
+    run(&mut s, "edit.redo", json!({}));
+    assert!(s.modified, "redoing to the modified state should set the modified flag");
+}
