@@ -54,6 +54,28 @@ fn imports_vector_constants_and_unary_operations() {
     assert_eq!(&p.eval([0.0; 2], [1.0; 2], &[], true, &mut Vec::new())[..2], &[0.25, 0.75]);
 }
 #[test]
+fn imports_pow2_log2_and_cartesian_expressions() {
+    let nodes = [
+        node("1", "get_float1", r#"<constantValueString v="amount"/>"#, ""),
+        node("2", "pow2", "", &wire("a", "1")),
+        node("3", "const_float1", r#"<constantValue><constantValueFloat1 v="2"/></constantValue>"#, ""),
+        node("4", "log2", "", &wire("a", "3")),
+        node("5", "cartesian", "", &(wire("a", "2") + &wire("b", "4"))),
+    ]
+    .concat();
+    let report = read(&xml(&nodes, "5", "transformation", "offset"));
+    assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+    let f = &report.pkg.graphs[0].nodes[0].functions["offset"];
+    let mut vars = BTreeMap::new();
+    vars.insert("amount".into(), Value::Float(3.0));
+    let p = materialcraft_nodes::function::compile(f, &vars, 0).unwrap();
+    assert_eq!(p.dims(), 2);
+    let result = p.eval([0.0; 2], [1.0; 2], &[], true, &mut Vec::new());
+    assert!((result[0] - 8.0 * 1.0f32.cos()).abs() < 1e-6, "{result:?}");
+    assert!((result[1] - 8.0 * 1.0f32.sin()).abs() < 1e-6, "{result:?}");
+    assert_eq!(&result[2..], &[0.0, 0.0]);
+}
+#[test]
 fn invalid_or_unsupported_expressions_warn_and_keep_defaults() {
     let valid = xml(&expression(), "99999999999", "blur", "intensity");
     for (case, text) in [

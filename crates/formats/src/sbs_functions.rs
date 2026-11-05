@@ -48,8 +48,8 @@ pub(super) fn read(dynamic: XmlNode, variables: &BTreeMap<String, Value>, target
             "const_float1" => ("const_float", &[]),
             "const_float2" | "const_float3" | "const_float4" => (name, &[]),
             "get_float1" | "get_float2" | "get_float3" | "get_float4" => ("get_var", &[]),
-            "add" | "sub" | "mul" | "div" => (name, &["a", "b"]),
-            "neg" | "abs" | "floor" | "ceil" | "cos" | "sin" | "sqrt" | "log" | "exp" => (name, &["a"]),
+            "add" | "sub" | "mul" | "div" | "cartesian" => (name, &["a", "b"]),
+            "neg" | "abs" | "floor" | "ceil" | "cos" | "sin" | "sqrt" | "log" | "exp" | "pow2" | "log2" => (name, &["a"]),
             _ => return Err(format!("unsupported function operation `{name}`")),
         };
         let value = if ports.is_empty() {
