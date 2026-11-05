@@ -21,6 +21,26 @@ mod normal_blend_tests {
         let out = (def.cook)(&ctx).expect("cooks");
         assert!(out[0].data.iter().all(|v| v.is_finite()), "NaN or Inf in the blended normal");
     }
+
+    /// The blended normal keeps the base normal's alpha.
+    #[test]
+    fn normal_blend_preserves_base_alpha() {
+        let def = find("normal_blend").expect("normal_blend exists");
+        let params = resolve_params(def, &BTreeMap::new());
+        let no_res = |_: &str| None;
+        let vars = BTreeMap::new();
+        let alpha = 0.42;
+        // A regular base normal and one pointing away from the viewer (the guard path).
+        for base in [[0.5, 0.5, 1.0, alpha], [0.0, 0.0, 0.0, alpha]] {
+            let base = Image::filled(8, 8, Kind::Color, base);
+            let detail = Image::filled(8, 8, Kind::Color, [0.7, 0.4, 0.6, 0.9]);
+            let inputs = vec![Some(base), Some(detail), None];
+            let ctx = Ctx { w: 8, h: 8, seed: 1, tile: true, inputs: &inputs, params: &params, resource: &no_res, vars: &vars };
+            let out = (def.cook)(&ctx).expect("cooks");
+            let alphas: Vec<f32> = out[0].data.chunks(4).map(|p| p[3]).collect();
+            assert!(alphas.iter().all(|a| (a - alpha).abs() < 1e-6), "base alpha {alpha}, got {:?}", alphas[0]);
+        }
+    }
 }
 
 // Tests for the blur helpers.

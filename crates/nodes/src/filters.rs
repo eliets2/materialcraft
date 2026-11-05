@@ -778,7 +778,8 @@ fn normal_blend(ctx: &Ctx) -> CookResult {
     Ok(vec![Image::generate(ctx.w, ctx.h, Kind::Color, |x, y| {
         let (x, y) = (x as i64, y as i64);
         let k = op * mask.as_ref().map_or(1.0, |m| m.get_gray(x, y, false));
-        let b = unpack(base.get(x, y, false));
+        let base_px = base.get(x, y, false);
+        let b = unpack(base_px);
         let mut d = unpack(det.get(x, y, false));
         d = [d[0] * k, d[1] * k, 1.0 + (d[2] - 1.0) * k];
         // Reoriented normal mapping (Barré-Brisebois & Hill).
@@ -786,11 +787,11 @@ fn normal_blend(ctx: &Ctx) -> CookResult {
         let u = [-d[0], -d[1], d[2]];
         // A base normal pointing straight away (z = -1) has no reorientation; keep it.
         if t[2].abs() < 1e-4 {
-            return pack(b, 1.0);
+            return pack(b, base_px[3]);
         }
         let dot = t[0] * u[0] + t[1] * u[1] + t[2] * u[2];
         let r = [t[0] * dot / t[2] - u[0], t[1] * dot / t[2] - u[1], t[2] * dot / t[2] - u[2]];
-        pack(r, 1.0)
+        pack(r, base_px[3])
     })])
 }
 
