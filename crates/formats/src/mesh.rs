@@ -132,7 +132,15 @@ fn gltf(bytes: &[u8]) -> Result<Mesh> {
             let pos: Vec<Vec3> = pos.map(|p| m.transform_point3(Vec3::from(p))).collect();
             let n = pos.len();
             match reader.read_normals() {
-                Some(ns) => normals.extend(ns.map(|q| m.transform_vector3(Vec3::from(q)).normalize_or_zero())),
+                Some(ns) => {
+                    for q in ns {
+                        let v = m.transform_vector3(Vec3::from(q));
+                        if !v.is_finite() {
+                            return Err(bad("the mesh has non-finite (NaN or infinite) normals"));
+                        }
+                        normals.push(v.normalize_or_zero());
+                    }
+                }
                 None => all_normals = false,
             }
             match reader.read_tex_coords(0) {
@@ -239,6 +247,33 @@ mod tests {
     #[test]
     fn obj_non_finite_normals_are_rejected() {
         assert!(load_mesh("x.obj", b"v 0 0 0\nv 1 0 0\nv 0 1 0\nvn nan 0 1\nf 1//1 2//1 3//1\n").is_err());
+    }
+
+    #[test]
+    fn gltf_non_finite_normals_are_rejected() {
+        use base64::Engine as _;
+        let gltf_with_normals = |normals: [[f32; 3]; 4]| {
+            let idx: [u16; 6] = [0, 1, 2, 0, 2, 3];
+            let mut buf: Vec<u8> = QUAD.iter().flatten().flat_map(|f| f.to_le_bytes()).collect();
+            buf.extend(normals.iter().flatten().flat_map(|f| f.to_le_bytes()));
+            buf.extend(idx.iter().flat_map(|i| i.to_le_bytes()));
+            let b64 = base64::engine::general_purpose::STANDARD.encode(&buf);
+            format!(
+                r#"{{"asset":{{"version":"2.0"}},"scene":0,"scenes":[{{"nodes":[0]}}],"nodes":[{{"mesh":0}}],
+"meshes":[{{"primitives":[{{"attributes":{{"POSITION":0,"NORMAL":1}},"indices":2}}]}}],
+"accessors":[{{"bufferView":0,"componentType":5126,"count":4,"type":"VEC3","min":[-1e9,-1e9,-1e9],"max":[1e9,1e9,1e9]}},{{"bufferView":1,"componentType":5126,"count":4,"type":"VEC3"}},{{"bufferView":2,"componentType":5123,"count":6,"type":"SCALAR"}}],
+"bufferViews":[{{"buffer":0,"byteOffset":0,"byteLength":48}},{{"buffer":0,"byteOffset":48,"byteLength":48}},{{"buffer":0,"byteOffset":96,"byteLength":12}}],
+"buffers":[{{"byteLength":{},"uri":"data:application/octet-stream;base64,{b64}"}}]}}"#,
+                buf.len()
+            )
+            .into_bytes()
+        };
+        let mut nan_normals = [[0.0f32, 0.0, 1.0]; 4];
+        nan_normals[2][0] = f32::NAN;
+        assert!(load_mesh("x.gltf", &gltf_with_normals(nan_normals)).is_err());
+        let mut inf_normals = [[0.0f32, 0.0, 1.0]; 4];
+        inf_normals[1][2] = f32::INFINITY;
+        assert!(load_mesh("x.gltf", &gltf_with_normals(inf_normals)).is_err());
     }
 
     #[test]
