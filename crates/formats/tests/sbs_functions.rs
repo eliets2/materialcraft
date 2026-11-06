@@ -112,3 +112,33 @@ fn oversized_functions_are_rejected_and_simple_bindings_still_work() {
     assert_eq!(report.pkg.graphs[0].nodes[0].bindings["intensity"], "amount");
     assert!(report.warnings.is_empty());
 }
+#[test]
+fn malformed_pow2_log2_cartesian_warn_and_keep_defaults() {
+    let get = node("1", "get_float1", r#"<constantValueString v="amount"/>"#, "");
+    let constant = node("3", "const_float1", r#"<constantValue><constantValueFloat1 v="2"/></constantValue>"#, "");
+    let constant2 = node("6", "const_float2", r#"<constValue><constantValueFloat2 v="1 2"/></constValue>"#, "");
+    let constant2b = node("7", "const_float2", r#"<constValue><constantValueFloat2 v="1 2"/></constValue>"#, "");
+    let pow2 = node("2", "pow2", "", &wire("a", "1"));
+    let cases = [
+        xml(&(get.clone() + &pow2 + &node("5", "cartesian", "", &wire("a", "2"))), "5", "transformation", "offset"),
+        xml(&(get.clone() + &node("2", "pow2", "", &(wire("a", "1") + &wire("b", "1")))), "2", "blur", "intensity"),
+        xml(&(constant.clone() + &node("4", "log2", "", &(wire("a", "3") + &wire("a", "3")))), "4", "blur", "intensity"),
+        xml(&(get.clone() + &node("2", "pow2", "", "")), "2", "blur", "intensity"),
+        xml(&(constant.clone() + &node("4", "log2", "", &wire("x", "3"))), "4", "blur", "intensity"),
+        xml(&(get.clone() + &pow2 + &node("5", "cartesian", "", &(wire("a", "2") + &wire("a", "2")))), "5", "transformation", "offset"),
+        xml(&(constant2.clone() + &node("2", "pow2", "", &wire("a", "6"))), "2", "blur", "intensity"),
+        xml(&(constant2.clone() + &node("4", "log2", "", &wire("a", "6"))), "4", "blur", "intensity"),
+        xml(&(constant2.clone() + &constant + &node("5", "cartesian", "", &(wire("a", "6") + &wire("b", "3")))), "5", "blur", "intensity"),
+        xml(&(constant.clone() + &constant2 + &node("5", "cartesian", "", &(wire("a", "3") + &wire("b", "6")))), "5", "blur", "intensity"),
+        xml(&(constant2.clone() + &constant2b + &node("5", "cartesian", "", &(wire("a", "6") + &wire("b", "7")))), "5", "blur", "intensity"),
+        xml(&(constant.clone() + &node("5", "cartesian", "", &(wire("a", "3") + &wire("b", "3"))) + &node("2", "pow2", "", &wire("a", "5"))), "2", "blur", "intensity"),
+        xml(&(constant.clone() + &node("5", "cartesian", "", &(wire("a", "3") + &wire("b", "3"))) + &node("4", "log2", "", &wire("a", "5"))), "4", "blur", "intensity"),
+        xml(&(constant2.clone() + &node("2", "pow2", "", &wire("a", "6")) + &constant + &node("4", "log2", "", &wire("a", "3")) + &node("5", "cartesian", "", &(wire("a", "2") + &wire("b", "4")))), "5", "blur", "intensity"),
+        xml(&(constant2.clone() + &node("2", "pow2", "", &wire("a", "6")) + &constant2b + &node("4", "log2", "", &wire("a", "7")) + &node("5", "cartesian", "", &(wire("a", "2") + &wire("b", "4")))), "5", "blur", "intensity"),
+    ];
+    for (case, text) in cases.into_iter().enumerate() {
+        let report = read(&text);
+        assert!(report.pkg.graphs[0].nodes[0].functions.is_empty(), "case {case}: malformed pow2/log2/cartesian expression was imported");
+        assert!(report.warnings.iter().any(|w| w.contains("imported its default")), "case {case}: {:?}", report.warnings);
+    }
+}
