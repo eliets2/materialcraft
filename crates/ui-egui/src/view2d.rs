@@ -114,6 +114,8 @@ pub fn show(app: &mut MaterialCraftApp, ui: &mut Ui) {
     let texture_limit = ctx.input(|i| i.max_texture_side).max(1);
     let key = app.session.cooked.nodes.get(&id).map_or(0, |r| r.key)
         ^ (texture_limit as u64).rotate_left(32)
+        ^ (img.w as u64).rotate_left(16)
+        ^ img.h as u64
         ^ (app.session.view2d.port as u64).wrapping_mul(0x9e37)
         ^ (app.session.view2d.channel.len() as u64 * 31)
         ^ app.session.view2d.channel.bytes().next().unwrap_or(0) as u64;
