@@ -1,16 +1,3 @@
-//! # materialcraft-automation
-//!
-//! Agent-facing automation, L4 (no UI toolkit):
-//!
-//! * [`MaterialcraftMcp`]: an MCP server (official `rmcp` SDK). Headless mode drives an
-//!   in-process [`Headless`] session; bridge mode forwards to a running desktop app over the
-//!   JSON-lines control channel (`docs/control-protocol.md`).
-//! * [`Headless`]: a [`materialcraft_engine::Session`] plus file I/O through an
-//!   [`AuthorizedWorkspace`] and windowless renders. Shared by the MCP server, the RPC server
-//!   and `materialcraft-cli`.
-//! * [`rpc`]: the control channel's methods (plus `render`) over stdio or loopback TCP, used by
-//!   `materialcraft-cli serve`.
-//! * [`BridgeClient`]: the client side of the app's control channel.
 #![forbid(unsafe_code)]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
@@ -23,26 +10,16 @@ pub mod server;
 pub mod workspace;
 
 pub use bridge::BridgeClient;
-pub use headless::{Filesystem, Headless, RenderOptions};
-pub use server::{Backend, MaterialcraftMcp};
+mod filesystem;
+mod render_options;
+mod rendered;
+pub use filesystem::Filesystem;
+pub use headless::Headless;
+pub use render_options::RenderOptions;
+pub use rendered::Rendered;
+pub use server::{Backend, MaterialCraftMcp};
 pub use workspace::AuthorizedWorkspace;
 
-#[derive(Debug, thiserror::Error)]
-pub enum AutomationError {
-    #[error("{0}")]
-    BadRequest(String),
-    #[error("I/O: {0}")]
-    Io(String),
-    #[error(transparent)]
-    Engine(#[from] materialcraft_engine::EngineError),
-    #[error("bridge: {0}")]
-    Bridge(String),
-    #[error("app: {0}")]
-    App(String),
-    #[error("{0}")]
-    Other(String),
-}
-
-pub(crate) fn bad(msg: impl Into<String>) -> AutomationError {
-    AutomationError::BadRequest(msg.into())
-}
+mod automation_error;
+pub use automation_error::AutomationError;
+pub(crate) use automation_error::bad;

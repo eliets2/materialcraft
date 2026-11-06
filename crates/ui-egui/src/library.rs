@@ -6,7 +6,7 @@ use egui::{Color32, Rect, RichText, Sense, Ui, vec2};
 use egui_phosphor::regular as icon;
 
 use crate::MaterialCraftApp;
-use crate::graph_view::{LibraryDrag, header_color};
+use crate::graph::{LibraryDrag, header_color};
 use crate::i18n::tr;
 use crate::theme::Tokens;
 
@@ -39,6 +39,18 @@ fn category_icon(top: &str) -> &'static str {
 }
 
 pub fn show(app: &mut MaterialCraftApp, ui: &mut Ui) {
+    match crate::graph::editor_target::EditorTarget::resolve(app) {
+        crate::graph::editor_target::EditorTarget::Function => {
+            crate::function::library::show(app, ui);
+            return;
+        }
+        crate::graph::editor_target::EditorTarget::Pattern => {
+            crate::pattern::library::show(app, ui);
+            return;
+        }
+        crate::graph::editor_target::EditorTarget::Material => {}
+    }
+
     let tk = Tokens::get(ui.ctx());
     ui.horizontal(|ui| {
         ui.label(RichText::new(icon::MAGNIFYING_GLASS).color(tk.text_dim));
@@ -196,7 +208,7 @@ fn items(app: &mut MaterialCraftApp, ui: &mut Ui) {
         if is_graph {
             app.run("graph.node.add", serde_json::json!({"def": "graph_instance", "params": {"graph": id}}));
         } else {
-            crate::graph_view::add_node_near_selection(app, &id);
+            crate::graph::add_node_near_selection(app, &id);
         }
     }
 }

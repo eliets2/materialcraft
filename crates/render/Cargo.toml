@@ -9,6 +9,7 @@ license.workspace = true
 workspace = true
 
 [dependencies]
+materialcraft-core = { workspace = true }
 materialcraft-geom = { workspace = true }
 materialcraft-image = { workspace = true }
 rayon = { workspace = true }

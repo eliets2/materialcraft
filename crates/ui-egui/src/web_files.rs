@@ -1,13 +1,9 @@
-//! Files in the browser: File ▸ Open and Import bitmap use the browser's file picker (the bytes
-//! arrive on a later frame through [`poll`]); Save and Export outputs are downloads. The desktop
-//! uses native dialogs and the path-based engine commands instead (`windows::file_action`).
-
 use std::sync::{Mutex, PoisonError};
 
 use crate::MaterialCraftApp;
 use crate::i18n::tr;
 
-/// What a picked file is for.
+/// What a picked file is for
 #[derive(Clone, Copy, PartialEq)]
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 enum Pick {
@@ -16,10 +12,10 @@ enum Pick {
     Mesh,
 }
 
-/// Files picked in the browser, waiting for the next frame: (file name, bytes, purpose).
+/// Files picked in the browser, waiting for the next frame: (file name, bytes, purpose)
 static INBOX: Mutex<Vec<(String, Vec<u8>, Pick)>> = Mutex::new(Vec::new());
 
-/// Load files that arrived since the last frame. Call once per frame.
+/// Load files that arrived since the last frame. Call once per frame
 pub fn poll(app: &mut MaterialCraftApp) {
     let picked = std::mem::take(&mut *INBOX.lock().unwrap_or_else(PoisonError::into_inner));
     for (name, bytes, pick) in picked {
@@ -31,7 +27,7 @@ pub fn poll(app: &mut MaterialCraftApp) {
     }
 }
 
-/// Show a mesh file's bytes in the 3D view.
+/// Show a mesh file's bytes in the 3D view
 fn mesh(app: &mut MaterialCraftApp, name: &str, bytes: &[u8]) {
     match app.session.load_mesh_bytes(name, bytes) {
         Ok(()) => app.toast(format!("{} {name}", tr("Showing")), false),
@@ -39,7 +35,7 @@ fn mesh(app: &mut MaterialCraftApp, name: &str, bytes: &[u8]) {
     }
 }
 
-/// 3D view ▸ Scene ▸ Load mesh: a native dialog on the desktop, the file picker in the browser.
+/// 3D view ▸ Scene ▸ Load mesh: a native dialog on the desktop, the file picker in the browser
 pub fn load_mesh(app: &mut MaterialCraftApp, ctx: &egui::Context) {
     #[cfg(not(target_arch = "wasm32"))]
     {
@@ -55,7 +51,7 @@ pub fn load_mesh(app: &mut MaterialCraftApp, ctx: &egui::Context) {
     }
 }
 
-/// Open a package or import an image (by extension unless `bitmap` forces an image).
+/// Open a package or import an image (by extension unless `bitmap` forces an image)
 pub fn load(app: &mut MaterialCraftApp, name: &str, bytes: Vec<u8>, bitmap: bool) {
     let ext = name.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase()).unwrap_or_default();
     if materialcraft_engine::formats::mesh::MESH_EXTENSIONS.contains(&ext.as_str()) {
@@ -63,34 +59,20 @@ pub fn load(app: &mut MaterialCraftApp, name: &str, bytes: Vec<u8>, bitmap: bool
         return;
     }
     if bitmap || materialcraft_engine::formats::IMAGE_EXTENSIONS.contains(&ext.as_str()) {
-        // Import, add the node and bind it: one undo entry.
-        app.session.begin_group("Import bitmap");
-        match materialcraft_engine::file_cmds::add_resource(&mut app.session, name, bytes, None) {
-            Ok(res) => {
-                crate::graph_view::add_bitmap_node(app, &res);
-                app.toast(format!("{} {res}", tr("Imported")), false);
-            }
-            Err(e) => app.toast(format!("{} {name}: {e}", tr("Couldn't import")), true),
-        }
-        app.session.end_group();
+        crate::graph::import_bitmap_bytes(app, name, bytes);
         return;
     }
     if app.ui.windows.unsaved.is_some() {
         return;
     }
-    // Opening a package replaces the open one: ask first when it has unsaved changes.
-    if crate::unsaved::needs_confirmation(&app.session) {
-        app.pending_load = Some((name.to_string(), bytes));
-        crate::unsaved::guard(app, crate::unsaved::Guarded::LoadBytes { name: name.to_string() });
-        return;
-    }
-    load_now(app, name, &bytes);
+    app.pending_load = Some((name.to_string(), bytes));
+    crate::unsaved::guard(app, crate::unsaved::Guarded::LoadBytes { name: name.to_string() });
 }
 
-/// Open a package from bytes, replacing the open one (already confirmed).
-pub fn load_now(app: &mut MaterialCraftApp, name: &str, bytes: &[u8]) {
+pub(crate) fn load_now(app: &mut MaterialCraftApp, name: &str, bytes: &[u8]) {
     match materialcraft_engine::file_cmds::open_bytes(&mut app.session, bytes, Some(name.to_string())) {
         Ok(()) => {
+            app.close_subgraph_after("file.open");
             app.ui.frame_all = true;
             app.toast(format!("{} {name}", tr("Opened")), false);
             crate::windows::after_open(app);
@@ -99,16 +81,15 @@ pub fn load_now(app: &mut MaterialCraftApp, name: &str, bytes: &[u8]) {
     }
 }
 
-/// A file dropped on the window: a package opens, an image becomes a Bitmap node (in the
-/// browser the bytes arrive on a later frame).
+/// A file dropped on the window: a package opens, an image becomes a Bitmap node (in the browser the bytes arrive on a later frame)
 pub fn dropped(app: &mut MaterialCraftApp, ctx: &egui::Context, file: &egui::DroppedFileHandle) {
     let name = file.path().file_name().and_then(|n| n.to_str()).unwrap_or("dropped").to_string();
     #[cfg(not(target_arch = "wasm32"))]
     {
         let _ = ctx;
         let lower = name.to_ascii_lowercase();
-        if (lower.ends_with(".sbs") || lower.ends_with(".mcraft")) && file.path().is_file() {
-            // Open from the path so an SBS package finds the bitmaps kept next to it.
+        if lower.ends_with(".sbs") && file.path().is_file() {
+            // Open from the path so an SBS package finds the bitmaps kept next to it
             crate::windows::open_path(app, &file.path().display().to_string());
             return;
         }
@@ -131,7 +112,7 @@ pub fn dropped(app: &mut MaterialCraftApp, ctx: &egui::Context, file: &egui::Dro
     }
 }
 
-/// A zip of `(name, bytes)` files (export downloads several maps at once).
+/// A zip of `(name, bytes)` files (export downloads several maps at once)
 pub fn zip_files(files: &[(String, Vec<u8>)]) -> Result<Vec<u8>, String> {
     use std::io::Write as _;
     let mut buf = std::io::Cursor::new(Vec::new());
@@ -171,22 +152,22 @@ mod web {
         });
     }
 
-    /// File ▸ Open: a package, picked in the browser.
+    /// File ▸ Open: a package, picked in the browser
     pub fn open(ctx: &egui::Context) {
         pick(ctx, "MaterialCraft package or material", crate::windows::OPEN_EXTS, Pick::Package);
     }
 
-    /// 3D view ▸ Scene ▸ Load mesh.
+    /// 3D view ▸ Scene ▸ Load mesh
     pub fn pick_mesh(ctx: &egui::Context) {
         pick(ctx, "Meshes", materialcraft_engine::formats::mesh::MESH_EXTENSIONS, Pick::Mesh);
     }
 
-    /// File ▸ Import bitmap.
+    /// File ▸ Import bitmap
     pub fn import_bitmap(ctx: &egui::Context) {
         pick(ctx, "Images", materialcraft_engine::formats::IMAGE_EXTENSIONS, Pick::Bitmap);
     }
 
-    /// File ▸ Save: download the package as `<name>.sbs` (bitmaps embedded).
+    /// File ▸ Save: download the package as `<name>.sbs` (bitmaps embedded)
     pub fn save(app: &mut MaterialCraftApp) {
         let name = format!("{}.sbs", materialcraft_engine::formats::safe_file_name(&app.session.pkg.name));
         match materialcraft_engine::file_cmds::save_bytes(&app.session).map_err(|e| e.to_string()).and_then(|b| download(&name, &b)) {
@@ -198,7 +179,7 @@ mod web {
         }
     }
 
-    /// File ▸ Export material: download the open graph as `<graph>.mcmat`.
+    /// File ▸ Export material: download the open graph as `<graph>.mcmat`
     pub fn export_material(app: &mut MaterialCraftApp) {
         use materialcraft_engine::material_cmds::{MaterialOptions, material_bytes};
         let name = format!("{}.mcmat", materialcraft_engine::formats::safe_file_name(&app.session.graph().map(|g| g.name.clone()).unwrap_or_default()));
@@ -208,7 +189,7 @@ mod web {
         }
     }
 
-    /// Export outputs: one file downloads as is, several as `<graph>_outputs.zip`.
+    /// Export outputs: one file downloads as is, several as `<graph>_outputs.zip`
     pub fn export(app: &mut MaterialCraftApp, params: &serde_json::Value) {
         let result = materialcraft_engine::file_cmds::export_params(&app.session, params)
             .and_then(|(gi, ext, pattern, depth, size)| materialcraft_engine::file_cmds::export_outputs(&app.session, gi, &ext, &pattern, depth, size))
@@ -229,7 +210,7 @@ mod web {
         }
     }
 
-    /// Start a browser download of `bytes` named `name` (Blob + a temporary `<a download>`).
+    /// Start a browser download of `bytes` named `name` (Blob + a temporary `<a download>`)
     pub fn download(name: &str, bytes: &[u8]) -> Result<(), String> {
         let js = |e: wasm_bindgen::JsValue| format!("{e:?}");
         let window = web_sys::window().ok_or("no window")?;
@@ -246,7 +227,7 @@ mod web {
         document.body().ok_or("no body")?.append_child(&a).map_err(js)?;
         a.click();
         a.remove();
-        // Revoke once the click has been dispatched; the download keeps its own reference.
+        // Revoke once the click has been dispatched; the download keeps its own reference
         let revoke = wasm_bindgen::closure::Closure::once_into_js(move || {
             web_sys::Url::revoke_object_url(&url).ok();
         });

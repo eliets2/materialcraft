@@ -1,8 +1,4 @@
-//! Capability-based file access for untrusted automation paths (MCP, `serve`).
-//!
-//! Roots are trusted launch-time configuration (`--read-root`, `--write-root`); request paths
-//! are untrusted, forward-slash relative paths resolved by `cap-std` beneath the held directory
-//! handle, so `..`, absolute paths, drive prefixes and symlink or junction escapes all fail.
+//! Capability-based file access for untrusted automation paths (MCP, `serve`)
 
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -14,10 +10,10 @@ use serde_json::Value;
 
 use crate::{AutomationError, bad};
 
-/// Largest file read through automation (the mesh importer's own limit).
+/// Largest file read through automation (the mesh importer's own limit)
 pub const MAX_READ_BYTES: u64 = 256 << 20;
 
-/// Separate read and write directory capabilities. A missing authority fails closed.
+/// Separate read and write directory capabilities. A missing authority fails closed
 #[derive(Clone, Default)]
 pub struct AuthorizedWorkspace {
     read: Option<Arc<Dir>>,
@@ -29,7 +25,7 @@ impl AuthorizedWorkspace {
         Ok(Self { read: open_root(read_root, "read")?, write: open_root(write_root, "write")? })
     }
 
-    /// Read one regular file below the read root.
+    /// Read one regular file below the read root
     pub fn read(&self, path: &str) -> Result<Vec<u8>, AutomationError> {
         let rel = relative_path(path)?;
         let root = self.read.as_ref().ok_or_else(|| denied("read"))?;
@@ -46,8 +42,7 @@ impl AuthorizedWorkspace {
         Ok(bytes)
     }
 
-    /// Create or replace one file below the write root: a temporary file beside the target,
-    /// synced and renamed over it. The parent directory must exist.
+    /// Create or replace one file below the write root: a temporary file beside the target, synced and renamed over it. The parent directory must exist
     pub fn write(&self, path: &str, bytes: &[u8]) -> Result<(), AutomationError> {
         let rel = relative_path(path)?;
         let root = self.write.as_ref().ok_or_else(|| denied("write"))?;
@@ -69,14 +64,13 @@ impl AuthorizedWorkspace {
         Ok(())
     }
 
-    /// Fail now, before any expensive work, when [`write`](Self::write) to `path` cannot succeed
-    /// for lack of a write root or because the path is malformed.
+    /// Validate the write capability and relative path before cooking
     pub fn check_write(&self, path: &str) -> Result<(), AutomationError> {
         relative_path(path)?;
         self.write.as_ref().map(|_| ()).ok_or_else(|| denied("write"))
     }
 
-    /// Create a directory (and its parents) below the write root.
+    /// Create a directory and its parents below the write root
     pub fn create_dir_all(&self, path: &str) -> Result<(), AutomationError> {
         let rel = relative_path(path)?;
         let root = self.write.as_ref().ok_or_else(|| denied("write"))?;
@@ -94,7 +88,7 @@ fn open_root(path: Option<&Path>, authority: &str) -> Result<Option<Arc<Dir>>, A
     Ok(Some(Arc::new(dir)))
 }
 
-/// Validate an untrusted path before any I/O (cap-std then confines resolution to the root).
+/// Validate an untrusted path before any I/O (cap-std then confines resolution to the root)
 pub fn relative_path(raw: &str) -> Result<PathBuf, AutomationError> {
     let reject = |why: &str| bad(format!("path rejected ({why}): `{raw}`; use a forward-slash path relative to the workspace root"));
     if raw.is_empty() {
@@ -134,18 +128,14 @@ fn file_error(op: &str, path: &str, e: std::io::Error) -> AutomationError {
     AutomationError::Io(format!("{op} `{path}` failed: {e}"))
 }
 
-/// Engine commands that take host paths (`file.open`, `file.exportTextures`, `resource.import`,
-/// `material.save`, …) would bypass the workspace: automation clients use the workspace-scoped
-/// methods instead. Any command given a `path` or `dir` is refused, and every `file.*` command
-/// but `file.close` and `file.removeUnused` (`file.save` even without `path`: a headless session's path is
-/// workspace-relative, not a host path; `file.reimportMesh` without `path` re-reads the
-/// embedded mesh).
+/// Route file access through the workspace boundary
 pub fn authorize_command(id: &str, params: &Value) -> Result<(), AutomationError> {
     let has_path = ["path", "dir"].iter().any(|k| params.get(k).is_some_and(|v| !v.is_null()));
     let ok = match id {
-        "file.new" | "file.newPackage" => !has_path,
+        "file.new" | "file.newPackage" | "file.newAtomicSample" => !has_path,
         _ => !id.starts_with("file.") && !has_path,
     };
+
     if ok {
         Ok(())
     } else {
@@ -241,12 +231,11 @@ mod tests {
             assert!(authorize_command(id, &json!({"path": "/etc/x"})).is_err(), "{id}");
             assert!(authorize_command(id, &json!({"dir": "/etc"})).is_err(), "{id}");
         }
-        assert!(authorize_command("file.new", &json!({"template": "bricks"})).is_ok());
+        assert!(authorize_command("file.new", &json!({"template": "atomics"})).is_ok());
         assert!(authorize_command("graph.node.add", &json!({"def": "blur", "path": null})).is_ok());
     }
 
-    /// Every registry command documenting a host path must be classified (fails when a new
-    /// path-taking command is added without an automation policy).
+    /// Every registry command documenting a host path must be classified (fails when a new path-taking command is added without an automation policy)
     #[test]
     fn registry_path_params_are_classified() {
         let probe = json!({"path": "/outside/probe", "dir": "/outside", "mesh": "/outside/m.obj"});

@@ -14,51 +14,23 @@ pub fn gaussian(img: &Image, sigma: f32, tile: bool) -> Image {
     }
     let sigma = sigma.min(img.w.max(img.h) as f32);
     if sigma < 3.0 {
-        let (k, r) = gauss_kernel(sigma);
+        let r = (sigma * 3.0).ceil() as i64;
+        let k: Vec<f32> = (-r..=r).map(|i| (-(i * i) as f32 / (2.0 * sigma * sigma)).exp()).collect();
+        let s: f32 = k.iter().sum();
+        let k: Vec<f32> = k.iter().map(|v| v / s).collect();
         let pass = |src: &Image, horizontal: bool| convolve_1d(src, &k, r, horizontal, tile);
         return pass(&pass(img, true), false);
     }
-    let mut out = img.clone();
-    for r in box_radii(sigma) {
-        out = box_1d(&box_1d(&out, r, true, tile), r, false, tile);
-    }
-    out
-}
-
-/// Horizontal-only Gaussian (sigma in pixels, clamped to the image size), O(1) per pixel.
-pub fn gaussian_h(img: &Image, sigma: f32, tile: bool) -> Image {
-    if sigma.is_nan() || sigma <= 0.05 || !sigma.is_finite() {
-        return img.clone();
-    }
-    let sigma = sigma.min(img.w.max(img.h) as f32);
-    if sigma < 3.0 {
-        let (k, r) = gauss_kernel(sigma);
-        return convolve_1d(img, &k, r, true, tile);
-    }
-    let mut out = img.clone();
-    for r in box_radii(sigma) {
-        out = box_1d(&out, r, true, tile);
-    }
-    out
-}
-
-fn gauss_kernel(sigma: f32) -> (Vec<f32>, i64) {
-    let r = (sigma * 3.0).ceil() as i64;
-    let k: Vec<f32> = (-r..=r).map(|i| (-(i * i) as f32 / (2.0 * sigma * sigma)).exp()).collect();
-    let s: f32 = k.iter().sum();
-    (k.iter().map(|v| v / s).collect(), r)
-}
-
-/// Box radii for three passes approximating a Gaussian (Kovesi, "Fast almost-Gaussian filtering").
-fn box_radii(sigma: f32) -> [i64; 3] {
+    // Box widths for three passes (Kovesi, "Fast almost-Gaussian filtering").
     let n = 3.0f32;
     let wl = ((12.0 * sigma * sigma / n + 1.0).sqrt()).floor() as i64;
     let wl = if wl % 2 == 0 { wl - 1 } else { wl };
     let wu = wl + 2;
     let m = ((12.0 * sigma * sigma - n * (wl * wl) as f32 - 4.0 * n * wl as f32 - 3.0 * n) / (-4.0 * wl as f32 - 4.0)).round() as i64;
-    let mut out = [0; 3];
-    for (i, o) in out.iter_mut().enumerate() {
-        *o = ((if (i as i64) < m { wl } else { wu } - 1) / 2).max(0);
+    let mut out = img.clone();
+    for i in 0..3 {
+        let r = (if i < m { wl } else { wu } - 1) / 2;
+        out = box_1d(&box_1d(&out, r.max(0), true, tile), r.max(0), false, tile);
     }
     out
 }

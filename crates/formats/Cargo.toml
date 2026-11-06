@@ -1,6 +1,6 @@
 [package]
 name = "materialcraft-formats"
-description = "MaterialCraft file formats: .sbs and .mcraft packages, bitmap import, texture export"
+description = "MaterialCraft file formats: native SBS packages, bitmap import, texture export"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -23,3 +23,4 @@ zip = { workspace = true }
 roxmltree = { workspace = true }
 flate2 = { workspace = true }
 base64 = { workspace = true }
+resvg = { workspace = true }
