@@ -111,7 +111,15 @@ fn serve(stream: TcpStream, token: &str, tx: &Sender<ControlRequest>, ctx: &egui
                 reply(&mut out, Value::Null, json!({"ok": false, "error": "request too large"}));
                 return;
             }
-            Ok(LineRead::Eof) | Err(_) => return,
+            Ok(LineRead::Eof) => return,
+            Err(e) if e.kind() == std::io::ErrorKind::InvalidData => {
+                let sent = reply(&mut out, Value::Null, json!({"ok": false, "error": "request is not UTF-8"}));
+                if !sent || deadline.is_some() {
+                    return;
+                }
+                continue;
+            }
+            Err(_) => return,
         }
         if line.trim().is_empty() {
             continue;
@@ -228,6 +236,18 @@ mod tests {
         assert_eq!((pong["result"].clone(), pong["id"].clone()), (json!("ping"), json!(3)));
         assert_eq!(call(&mut w, &mut r, "not json").unwrap()["ok"], false);
         assert_eq!(call(&mut w, &mut r, r#"{"id":4,"method":"ping"}"#).unwrap()["id"], 4, "bad JSON keeps an authenticated connection");
+    }
+
+    #[test]
+    fn non_utf8_line_before_auth_gets_refusal_reply() {
+        let addr = server();
+        let (mut w, mut r) = connect(addr);
+        w.write_all(b"\xff\n").unwrap();
+        w.flush().unwrap();
+        let mut reply = String::new();
+        let n = r.read_line(&mut reply).unwrap();
+        assert!(n > 0, "a non-UTF8 first line gets a refusal reply, not a silent close");
+        assert_eq!(serde_json::from_str::<Value>(&reply).unwrap()["ok"], false);
     }
 
     #[test]
