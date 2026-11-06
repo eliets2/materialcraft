@@ -62,7 +62,7 @@ fn graph_name_typed_across_frames_commits_on_focus_loss() {
     h.run_steps(8);
     h.state_mut().run("graph.select", json!({"ids": []})).unwrap();
     h.run_steps(3);
-    assert_eq!(h.state().session.graph().unwrap().name, "New_graph");
+    assert_eq!(h.state().session.graph().unwrap().name, "Empty");
     h.get_by_label("Graph name").click();
     h.step();
     h.key_press_modifiers(Modifiers::COMMAND, Key::A);
@@ -78,6 +78,74 @@ fn graph_name_typed_across_frames_commits_on_focus_loss() {
     }
     h.run_steps(4);
     assert_eq!(h.state().session.graph().unwrap().name, "My_graph", "graph name typed across frames was reset before focus was lost");
+}
+#[test]
+fn empty_graph_name_commit_is_not_overwritten_by_auto_rename() {
+    let mut app = MaterialCraftApp::headless(materialcraft_engine::sample_session(), UiState::default());
+    app.run("file.new", json!({"template":"empty"})).unwrap();
+    app.session.reset_history();
+    let builder = Harness::builder().with_size(vec2(1600.0, 960.0)).with_step_dt(1.0 / 60.0);
+    let mut h = builder.build_ui_state(
+        |ui, app: &mut MaterialCraftApp| {
+            app.step(&ui.ctx().clone());
+            app.draw(ui);
+        },
+        app,
+    );
+    h.run_steps(8);
+    h.state_mut().run("graph.select", json!({"ids": []})).unwrap();
+    h.run_steps(3);
+    assert_eq!(h.state().session.graph().unwrap().name, "Empty");
+    h.get_by_label("Graph name").click();
+    h.step();
+    h.key_press_modifiers(Modifiers::COMMAND, Key::A);
+    h.step();
+    type_text(&mut h, "My_graph");
+    h.run_steps(2);
+    let pos = h.state().graph.view.left_top() + vec2(20.0, 20.0);
+    h.event(Event::PointerMoved(pos));
+    h.step();
+    for pressed in [true, false] {
+        h.event(Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, modifiers: Modifiers::NONE });
+        h.step();
+    }
+    h.run_steps(4);
+    assert_eq!(h.state().session.graph().unwrap().name, "My_graph", "commit from Empty was overwritten by auto-rename");
+}
+#[test]
+fn graph_attribute_typed_across_frames_commits_on_focus_loss() {
+    let mut app = MaterialCraftApp::headless(materialcraft_engine::sample_session(), UiState::default());
+    app.run("file.new", json!({"template":"empty"})).unwrap();
+    app.session.reset_history();
+    let builder = Harness::builder().with_size(vec2(1600.0, 960.0)).with_step_dt(1.0 / 60.0);
+    let mut h = builder.build_ui_state(
+        |ui, app: &mut MaterialCraftApp| {
+            app.step(&ui.ctx().clone());
+            app.draw(ui);
+        },
+        app,
+    );
+    h.run_steps(8);
+    h.state_mut().run("graph.select", json!({"ids": []})).unwrap();
+    h.run_steps(3);
+    assert_eq!(h.state().session.graph().unwrap().name, "Empty");
+    h.get_by_label("Description").click();
+    h.step();
+    h.key_press_modifiers(Modifiers::COMMAND, Key::A);
+    h.step();
+    type_text(&mut h, "My");
+    h.run_steps(3);
+    type_text(&mut h, "_description");
+    h.run_steps(2);
+    let pos = h.state().graph.view.left_top() + vec2(20.0, 20.0);
+    h.event(Event::PointerMoved(pos));
+    h.step();
+    for pressed in [true, false] {
+        h.event(Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, modifiers: Modifiers::NONE });
+        h.step();
+    }
+    h.run_steps(4);
+    assert_eq!(h.state().session.graph().unwrap().attributes.description, "My_description", "attribute typed across frames was reset before focus was lost");
 }
 #[test]
 fn scale_x_commits_on_enter_and_focus_loss_with_undo() {
