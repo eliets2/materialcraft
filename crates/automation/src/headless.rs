@@ -1,5 +1,4 @@
-//! The headless backend: a [`Session`] plus file I/O and windowless renders. Synchronous and
-//! UI-free; the MCP server, the RPC server and the CLI all drive it.
+//! The headless backend: a [`Session`] plus file I/O and windowless renders. Synchronous and UI-free; the MCP server, the RPC server and the CLI all drive it
 
 use std::path::Path;
 
@@ -11,50 +10,8 @@ use serde_json::{Value, json};
 
 use crate::budgets::{HQ_TRIANGLES, MAX_LOCAL_RENDER_SIDE, MAX_PNG_SIDE, check_png, encode_png};
 use crate::workspace::{MAX_READ_BYTES, authorize_command};
-use crate::{AuthorizedWorkspace, AutomationError, bad};
-
-/// Where file paths given to [`Headless`] may point.
-pub enum Filesystem {
-    /// No file access (an MCP server started without roots).
-    Denied,
-    /// Host paths as given: the local CLI user typed them.
-    TrustedLocal,
-    /// Relative paths under the authorized roots (remote or agent callers).
-    Workspace(AuthorizedWorkspace),
-}
-
-/// What [`Headless::render_png`] draws.
-#[derive(Clone, Debug, Default)]
-pub struct RenderOptions {
-    /// `3d` (default) or `2d` (a node's output; the 2D view's node by default).
-    pub view: Option<String>,
-    pub width: Option<u32>,
-    pub height: Option<u32>,
-    /// Camera overrides in degrees (the session's view is not changed).
-    pub yaw: Option<f32>,
-    pub pitch: Option<f32>,
-    /// 3D scene override (`rounded_cube`, `sphere`, …).
-    pub scene: Option<String>,
-    /// 2D: the node whose output to show.
-    pub node: Option<u64>,
-    /// 2D: the output port.
-    pub port: Option<usize>,
-    /// Cook at full size instead of the preview size.
-    pub full: bool,
-    /// 3D: UV repeats override (the session's view is not changed).
-    pub tiling: Option<f32>,
-    /// 3D: beauty render: a finer displaced mesh, ray-traced ambient occlusion, a shadowed key light and 3×3 supersampling.
-    pub hq: bool,
-    /// 3D, with `hq`: displacement depth in scene radii (default: the view's height depth).
-    pub displacement: Option<f32>,
-}
-
-/// A PNG render.
-pub struct Rendered {
-    pub width: u32,
-    pub height: u32,
-    pub png: Vec<u8>,
-}
+use crate::{AutomationError, bad};
+pub use crate::{Filesystem, RenderOptions, Rendered};
 
 pub struct Headless {
     pub session: Session,
@@ -63,7 +20,7 @@ pub struct Headless {
     light: Option<Lighting>,
 }
 
-/// Read a file under `fs`'s access rules.
+/// Read a file under `fs`'s access rules
 fn read_file(fs: &Filesystem, path: &str) -> Result<Vec<u8>, AutomationError> {
     match fs {
         Filesystem::Denied => Err(bad("file access is not granted: start the server with --read-root <dir>")),
@@ -83,7 +40,7 @@ impl Headless {
         Headless { session, fs, scene: None, light: None }
     }
 
-    /// The session a fresh server starts with: the brick wall sample.
+    /// The session a fresh server starts with: the atomic sample
     pub fn default_session() -> Session {
         materialcraft_engine::sample_session()
     }
@@ -122,19 +79,15 @@ impl Headless {
         commands::list(&self.session, filter)
     }
 
-    /// Run an engine command. Untrusted callers can't reach host paths through it.
+    /// Run an engine command. Untrusted callers can't reach host paths through it
     pub fn command_run(&mut self, id: &str, params: Value) -> Result<Value, AutomationError> {
         if !self.trusted() {
             authorize_command(id, &params)?;
         }
-        // Each request is its own undo step, never merged with a neighbour's.
-        self.session.end_merge();
-        let r = materialcraft_engine::execute(&mut self.session, id, &params);
-        self.session.end_merge();
-        Ok(r?)
+        Ok(materialcraft_engine::commands::execute_request(&mut self.session, id, &params)?)
     }
 
-    /// Run `[{id, params?}]` in order, stopping at the first error (reported with its index).
+    /// Run `[{id, params?}]` in order, stopping at the first error (reported with its index)
     pub fn batch(&mut self, steps: &[Value]) -> Value {
         let mut results = Vec::new();
         for (i, step) in steps.iter().enumerate() {
@@ -147,7 +100,7 @@ impl Headless {
         batch_reply(results, None)
     }
 
-    /// Open an `.sbs` or `.mcraft` package (or a `.mcmat` material's source), reading linked bitmaps under the same access rules.
+    /// Open an `.sbs` package (or a `.mcmat` material's source), reading linked bitmaps under the same access rules
     pub fn open(&mut self, path: &str) -> Result<Value, AutomationError> {
         let bytes = self.read(path)?;
         let folder = path.replace('\\', "/").rsplit_once('/').map(|(folder, _)| format!("{folder}/")).unwrap_or_default();
@@ -166,21 +119,21 @@ impl Headless {
         Ok(self.inspect())
     }
 
-    /// Save to `path` (`.sbs` appended without a package extension) or the package's own file; SBS unless it is a `.mcraft`.
+    /// Save to `path` (`.sbs` appended without a package extension) or the package's own file; native SBS
     pub fn save(&mut self, path: Option<&str>) -> Result<Value, AutomationError> {
         let path = match path {
             Some(p) => file_cmds::package_path(p),
             None => self.session.path.clone().ok_or_else(|| bad("the package has no file yet (new, or opened from another program): give a `path`"))?,
         };
 
-        let bytes = file_cmds::save_bytes_as(&self.session, file_cmds::PackageFormat::of_path(&path))?;
+        let bytes = file_cmds::save_bytes(&self.session)?;
         self.write(&path, &bytes)?;
         self.session.path = Some(path.clone());
         self.session.modified = false;
         Ok(json!({"path": path, "bytes": bytes.len()}))
     }
 
-    /// Embed an image file as a bitmap resource.
+    /// Embed an image file as a bitmap resource
     pub fn import_bitmap(&mut self, path: &str, name: Option<&str>) -> Result<Value, AutomationError> {
         let bytes = self.read(path)?;
         let file = Path::new(path).file_name().and_then(|f| f.to_str()).unwrap_or("bitmap.png").to_string();
@@ -188,7 +141,7 @@ impl Headless {
         Ok(json!({"name": name}))
     }
 
-    /// Export every output of a graph into folder `dir`.
+    /// Export every output of a graph into folder `dir`
     pub fn export(&mut self, p: &Value) -> Result<Value, AutomationError> {
         let dir = p.get("dir").and_then(Value::as_str).ok_or_else(|| bad("`dir` is required"))?;
         let (gi, ext, pattern, depth, size) = file_cmds::export_params(&self.session, p)?;
@@ -203,9 +156,7 @@ impl Headless {
         Ok(json!({"files": written}))
     }
 
-    /// Cook a graph and write it as a portable `.mcmat` material (`.mcmat` appended when
-    /// missing) to `path`: `{path, graph?, size?, values?}`, the workspace-scoped
-    /// `file.exportMaterial`. The file is capped at what `package_open` may read back.
+    /// Export a portable material below the granted write root
     pub fn export_material(&mut self, p: &Value) -> Result<Value, AutomationError> {
         let path = p.get("path").and_then(Value::as_str).ok_or_else(|| bad("`path` is required"))?;
         let path = if path.to_ascii_lowercase().ends_with(&format!(".{MATERIAL_EXT}")) { path.to_string() } else { format!("{path}.{MATERIAL_EXT}") };
@@ -223,7 +174,7 @@ impl Headless {
         Ok(json!({"path": path, "bytes": bytes.len()}))
     }
 
-    /// Render the 3D view or a node's 2D output as PNG.
+    /// Render the assigned material or a node output as PNG
     pub fn render_png(&mut self, o: &RenderOptions) -> Result<Rendered, AutomationError> {
         let max = if self.trusted() { MAX_LOCAL_RENDER_SIDE } else { MAX_PNG_SIDE };
         let saved = self.session.preview_size;
@@ -237,6 +188,7 @@ impl Headless {
             "3d" => Ok(self.render_3d(o, max)),
             other => Err(bad(format!("unknown view `{other}` (3d or 2d)"))),
         };
+
         if o.full {
             self.session.preview_size = saved;
             self.session.dirty = true;
@@ -252,6 +204,7 @@ impl Headless {
             Some(n) => self.session.cooked.image(NodeId(n), o.port.unwrap_or(0)).ok_or_else(|| bad(format!("node {n} has no cooked output")))?,
             None => self.session.view2d_image().map(|(_, i)| i).ok_or_else(|| bad("nothing to show: the graph has no outputs; pass `node`"))?,
         };
+
         let (w, h) = (o.width.unwrap_or(img.w).clamp(16, max), o.height.unwrap_or(img.h).clamp(16, max));
         let img = img.resize(w, h, true);
         Ok((w, h, img.to_rgba8_display()))
@@ -267,6 +220,7 @@ impl Headless {
                 Some((_, mesh)) => Scene::new((*mesh).clone()),
                 None => Scene::builtin(&scene_id),
             };
+
             self.scene = Some((key, scene));
         }
         if self.light.as_ref().is_none_or(|l| l.name != v.environment) {
@@ -290,6 +244,7 @@ impl Headless {
             alpha_view: v.alpha_view,
             ..Settings::default()
         };
+
         let (w, h) = (o.width.unwrap_or(1024).clamp(16, max), o.height.unwrap_or(768).clamp(16, max));
         let maps = Maps::from_usages(self.session.material_maps());
         let (Some((_, scene)), Some(light)) = (&self.scene, &self.light) else { return (w, h, vec![0; (w * h * 4) as usize]) };

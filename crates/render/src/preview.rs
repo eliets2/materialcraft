@@ -7,6 +7,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use crate::{Displacement, Relief};
 use materialcraft_geom::glam::{Vec2, Vec3};
 use materialcraft_geom::{Bvh, Mesh, OrbitCamera};
 use materialcraft_image::{Image, linear_to_srgb};
@@ -32,16 +33,18 @@ impl Maps {
     pub fn from_usages<'a>(items: impl IntoIterator<Item = (&'a str, &'a Image)>) -> Maps {
         let mut m = Maps::default();
         for (usage, img) in items {
-            let slot = match usage {
-                "baseColor" => &mut m.base_color,
-                "normal" => &mut m.normal,
-                "roughness" => &mut m.roughness,
-                "metallic" => &mut m.metallic,
-                "height" => &mut m.height,
-                "ambientOcclusion" => &mut m.ao,
-                "emissive" => &mut m.emissive,
-                "opacity" => &mut m.opacity,
-                _ => continue,
+            use materialcraft_core::MaterialChannel;
+            let Some(channel) = MaterialChannel::from_id(usage) else { continue };
+
+            let slot = match channel {
+                MaterialChannel::BaseColor => &mut m.base_color,
+                MaterialChannel::Normal => &mut m.normal,
+                MaterialChannel::Roughness => &mut m.roughness,
+                MaterialChannel::Metallic => &mut m.metallic,
+                MaterialChannel::Height => &mut m.height,
+                MaterialChannel::AmbientOcclusion => &mut m.ao,
+                MaterialChannel::Emissive => &mut m.emissive,
+                MaterialChannel::Opacity => &mut m.opacity,
             };
             if slot.is_none() {
                 *slot = Some(img.clone());
@@ -144,30 +147,6 @@ impl Scene {
         let displacement = Displacement { depth: relief.depth * self.radius, level: relief.level, tiling, max_triangles, shade_relief: maps.normal.is_none() };
         Some(Scene::displaced(&self.mesh, height, &displacement))
     }
-}
-
-/// How the height output shapes the 3D view's mesh.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Relief {
-    /// How far white rises above black, in scene radii; 0 = off.
-    pub depth: f32,
-    /// The height (0..1) that stays on the original surface: 0 = everything rises out of it.
-    pub level: f32,
-}
-
-/// The parameters of [`Scene::displaced`].
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Displacement {
-    /// How far white rises above black, in world units.
-    pub depth: f32,
-    /// The height (0..1) that stays on the original surface.
-    pub level: f32,
-    /// UV repeats of the height map.
-    pub tiling: f32,
-    /// Subdivide while one more step stays within this many triangles.
-    pub max_triangles: usize,
-    /// Shade with the displaced surface's normals instead of the original ones.
-    pub shade_relief: bool,
 }
 
 /// Triangle budget of a displaced scene in the interactive 3D view (builds in about 0.2–0.3 s on two cores).

@@ -37,7 +37,7 @@ fn relink_uses_the_first_declared_input_regardless_of_wire_creation_order() {
         assert_eq!(s.history().len(), history + 1);
         assert!(s.selection.is_empty());
         let cooked = s.cook();
-        assert_eq!(cooked.nodes[&NodeId(output)].outputs[0].get(0, 0, false), [0.8, 0.4, 0.2, 1.0]);
+        assert_eq!(cooked.image(NodeId(output), 0).unwrap().get(0, 0, false), [0.8, 0.4, 0.2, 1.0]);
         run(&mut s, "edit.undo", json!({}));
         assert_eq!(s.pkg.graphs, before);
         run(&mut s, "edit.redo", json!({}));

@@ -1,6 +1,5 @@
-//! MaterialCraft desktop app.
-//!
-//! Usage: `materialcraft [package.sbs|package.mcraft] [--control <port>] [--empty] [--version]`
+//! MaterialCraft desktop app
+//! Usage: `materialcraft [package.sbs] [--control <port>] [--empty] [--version]`
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 #![forbid(unsafe_code)]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
@@ -39,14 +38,14 @@ fn parse_args() -> Result<Option<Args>, String> {
                 return Ok(None);
             }
             "--help" | "-h" => {
-                println!("{}\n\nUsage: materialcraft [package.sbs|package.mcraft] [--control <port>] [--empty]", version());
+                println!("{}\n\nUsage: materialcraft [package.sbs] [--control <port>] [--empty]", version());
                 return Ok(None);
             }
             "--control" => {
                 let p = it.next().ok_or("--control needs a port")?;
                 args.control = Some(p.parse().map_err(|_| format!("invalid port `{p}`"))?);
             }
-            // Kept for scripts written before empty startup became the default.
+            // Kept for scripts written before empty startup became the default
             "--empty" => {}
             f if !f.starts_with('-') => args.file = Some(f.to_string()),
             other => return Err(format!("unknown option `{other}`")),
@@ -81,6 +80,7 @@ fn main() {
             std::process::exit(2);
         }
     };
+
     let prev = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         eprintln!("materialcraft: internal error: {info}");
@@ -91,8 +91,7 @@ fn main() {
     if let Some(i) = icon() {
         viewport = viewport.with_icon(i);
     }
-    // Scripted runs (agents, tests) set MATERIALCRAFT_NO_PREFS so they neither read nor overwrite
-    // the user's saved layout and settings: state goes to a throwaway file.
+    // Scripted runs (agents, tests) set MATERIALCRAFT_NO_PREFS so they neither read nor overwrite the user's saved layout and settings: state goes to a throwaway file
     let persistence_path =
         std::env::var_os("MATERIALCRAFT_NO_PREFS").map(|_| std::env::temp_dir().join(format!("materialcraft-noprefs-{}.ron", std::process::id())));
     let options = eframe::NativeOptions { viewport, renderer: eframe::Renderer::Wgpu, persistence_path, ..Default::default() };
@@ -136,11 +135,13 @@ mod tests {
 
     #[test]
     fn startup_opens_the_requested_package() {
-        let path = std::env::temp_dir().join(format!("mc-startup-{}.mcraft", std::process::id()));
+        let path = std::env::temp_dir().join(format!("mc-startup-{}.sbs", std::process::id()));
         let original = materialcraft_engine::sample_session();
         std::fs::write(&path, materialcraft_engine::file_cmds::save_bytes(&original).unwrap()).unwrap();
         let s = initial_session(&Args { file: Some(path.to_string_lossy().into_owned()), control: None });
-        assert_eq!(s.pkg.graphs, original.pkg.graphs);
+        assert_eq!(s.pkg.graphs.len(), original.pkg.graphs.len());
+        assert_eq!(s.pkg.graphs[0].name, original.pkg.graphs[0].name);
+        assert_eq!(materialcraft_engine::file_cmds::save_bytes(&s).unwrap(), materialcraft_engine::file_cmds::save_bytes(&original).unwrap());
         assert_eq!(s.path.as_deref(), path.to_str());
         assert!(!s.modified);
         std::fs::remove_file(path).unwrap();
