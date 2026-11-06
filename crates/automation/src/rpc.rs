@@ -355,6 +355,18 @@ mod tests {
     }
 
     #[test]
+    fn material_export_rejects_inputs_outside_workspace() {
+        let (inside, outside, h) = workspace_session("mat-inputs-escape", true);
+        std::fs::write(outside.join("secret.png"), b"not a png").unwrap();
+        let abs = outside.join("secret.png").display().to_string();
+        for p in ["../outside/secret.png", "a/../../outside/secret.png", "/tmp/secret.png", "a\\b.png", abs.as_str()] {
+            let e = call(&h, "material.export", json!({"path": "m.mcmat", "size": 16, "inputs": {"curvature": p}}));
+            assert!(e.is_err(), "accepted input {p:?}");
+        }
+        assert_eq!(std::fs::read_dir(&inside).unwrap().count(), 0, "failed exports leave nothing behind");
+    }
+
+    #[test]
     fn tcp_requires_the_token() {
         use std::io::{BufRead, BufReader};
         let h = Arc::new(session());
