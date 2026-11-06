@@ -9,7 +9,7 @@ use materialcraft_core::Graph;
 use materialcraft_core::Value;
 use materialcraft_formats::material::{FORMAT, ImageInput, Manifest, MapEntry, Parameter, PresetEntry, VERSION, portable, srgb_usage};
 use materialcraft_formats::{Depth, encode};
-#[cfg(test)]
+#[cfg(any(test, not(target_arch = "wasm32")))]
 use materialcraft_image::Image;
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -154,16 +154,22 @@ pub fn material_request(s: &Session, cmd: &str, p: &J) -> Result<(usize, Materia
 }
 
 #[cfg(not(target_arch = "wasm32"))]
+pub fn load_inputs(read: impl Fn(&str) -> std::result::Result<Vec<u8>, String>, p: &J, inputs: &mut BTreeMap<String, Image>) -> Result<()> {
+    for (id, file) in p.get("inputs").and_then(J::as_object).into_iter().flatten() {
+        let file = file.as_str().ok_or_else(|| bad("material.export", format!("inputs.{id} must be an image path")))?;
+        let bytes = read(file).map_err(|e| bad("material.export", e))?;
+        inputs.insert(id.clone(), materialcraft_formats::decode(&bytes, false)?);
+    }
+    Ok(())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 fn export_material(s: &mut Session, p: &J) -> Result<J> {
     const CMD: &str = "file.exportMaterial";
     let path = strp(p, "path").ok_or_else(|| bad(CMD, "`path` is required"))?;
     let path = if path.to_ascii_lowercase().ends_with(&format!(".{MATERIAL_EXT}")) { path.to_string() } else { format!("{path}.{MATERIAL_EXT}") };
     let (gi, mut o) = material_request(s, CMD, p)?;
-    for (id, file) in p.get("inputs").and_then(J::as_object).into_iter().flatten() {
-        let file = file.as_str().ok_or_else(|| bad(CMD, format!("inputs.{id} must be an image path")))?;
-        let bytes = std::fs::read(file).map_err(|e| bad(CMD, format!("{file}: {e}")))?;
-        o.inputs.insert(id.clone(), materialcraft_formats::decode(&bytes, false)?);
-    }
+    load_inputs(|f| std::fs::read(f).map_err(|e| format!("{f}: {e}")), p, &mut o.inputs)?;
     let bytes = material_bytes(s, gi, &o)?;
     materialcraft_formats::write_atomic(std::path::Path::new(&path), &bytes)?;
     s.log(format!("Exported material {path}"));
