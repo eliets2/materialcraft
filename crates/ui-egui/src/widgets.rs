@@ -91,8 +91,13 @@ pub fn bar_slider(ui: &mut Ui, label: &str, value: &mut f32, range: std::ops::Ra
     if (resp.dragged() || resp.clicked())
         && let Some(p) = resp.interact_pointer_pos()
     {
-        let t = ((p.x - rect.left() - 4.0) / (rect.width() - 8.0).max(1.0)).clamp(0.0, 1.0);
-        let v = lo + (hi - lo) * t;
+        let value_at = |x: f32| {
+            let t = ((x - rect.left() - 4.0) / (rect.width() - 8.0).max(1.0)).clamp(0.0, 1.0);
+            f64::from(lo) + (f64::from(hi) - f64::from(lo)) * f64::from(t)
+        };
+        // Use the same round-value aiming as egui's standard sliders, within one physical pixel.
+        let radius = ui.input(|i| i.aim_radius());
+        let v = egui::emath::smart_aim::best_in_range_f64(value_at(p.x - radius), value_at(p.x + radius)) as f32;
         if (v - *value).abs() > f32::EPSILON {
             *value = v;
             resp.mark_changed();

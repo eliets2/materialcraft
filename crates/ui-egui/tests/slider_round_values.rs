@@ -5,7 +5,7 @@ use egui_kittest::{
     kittest::{By, Queryable},
 };
 use materialcraft_engine::core::{NodeId, Value};
-use materialcraft_ui_egui::{MaterialCraftApp, UiState};
+use materialcraft_ui_egui::{MaterialCraftApp, UiState, widgets};
 use serde_json::json;
 
 fn harness(ppp: f32, render: bool, definition: &str) -> (Harness<'static, MaterialCraftApp>, NodeId) {
@@ -74,6 +74,33 @@ fn fractional_parameter_values_remain_reachable() {
     drag_near(&mut h, "X", 0, -0.5, -1.0, 1.0);
     let n = h.state().session.graph().unwrap().node(id).unwrap();
     assert_eq!(n.params.get("offset"), Some(&Value::Float2([-0.5, 0.25])));
+}
+
+#[test]
+fn bar_slider_drag_reaches_exact_round_values() {
+    let mut h = Harness::builder().with_size(vec2(800.0, 400.0)).with_pixels_per_point(1.0).build_ui_state(
+        |ui, value: &mut f32| {
+            widgets::bar_slider(ui, "Brightness", value, 0.0..=1.0, 128.0);
+        },
+        0.0f32,
+    );
+    h.run_steps(3);
+    let rect = h.get(By::new().role(egui::accesskit::Role::Slider).label("Brightness")).rect();
+    let start = pos2(rect.left() + rect.width() * 0.2, rect.center().y);
+    // Aim 0.4 of a physical pixel to the right of 0.5, as the other drags do.
+    let target = pos2(rect.left() + 4.0 + (rect.width() - 8.0) * 0.5 + 0.4 / h.ctx.pixels_per_point(), rect.center().y);
+    h.event(Event::PointerMoved(start));
+    h.step();
+    h.event(Event::PointerButton { pos: start, button: PointerButton::Primary, pressed: true, modifiers: Modifiers::NONE });
+    h.step();
+    h.event(Event::PointerMoved(start + vec2(10.0, 0.0)));
+    h.step();
+    h.event(Event::PointerMoved(target));
+    h.step();
+    h.event(Event::PointerButton { pos: target, button: PointerButton::Primary, pressed: false, modifiers: Modifiers::NONE });
+    h.step();
+    h.run_steps(3);
+    assert_eq!(*h.state(), 0.5);
 }
 
 #[test]
