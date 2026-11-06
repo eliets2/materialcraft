@@ -35,7 +35,8 @@ fn drag_near(h: &mut Harness<'static, MaterialCraftApp>, label: &str, index: usi
     let rect = h.get_all(By::new().role(egui::accesskit::Role::Slider).label(label)).nth(index).unwrap().rect();
     let start = pos2(rect.left() + rect.width() * 0.2, rect.center().y);
     // Aim slightly off the exact value, within the half-physical-pixel snap range.
-    let target = pos2(rect.left() + 5.0 + (rect.width() - 10.0) * (value - lo) / (hi - lo) + AIM_OFFSET_PHYSICAL_PIXELS / h.ctx.pixels_per_point(), rect.center().y);
+    let target =
+        pos2(rect.left() + 5.0 + (rect.width() - 10.0) * (value - lo) / (hi - lo) + AIM_OFFSET_PHYSICAL_PIXELS / h.ctx.pixels_per_point(), rect.center().y);
     h.event(Event::PointerMoved(start));
     h.step();
     h.event(Event::PointerButton { pos: start, button: PointerButton::Primary, pressed: true, modifiers: Modifiers::NONE });
