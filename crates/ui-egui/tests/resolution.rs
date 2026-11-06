@@ -49,6 +49,36 @@ fn selecting_4k_cooks_and_displays_4k_material_maps() {
 }
 
 #[test]
+fn four_k_preview_refreshes_texture_after_size_change() {
+    let mut h = Harness::builder().with_context_setup(materialcraft_ui_egui::theme::install).with_size(vec2(1200.0, 800.0)).build_ui_state(
+        |ui, app: &mut MaterialCraftApp| {
+            app.apply_prefs();
+            view2d::show(app, ui);
+        },
+        app(),
+    );
+    h.input_mut().max_texture_side = Some(4096);
+    // The cooked key alone does not name the input size, so changing size must still refresh.
+    let node = h.state().session.view2d.node.unwrap();
+    h.state_mut().session.preview_size = Some(4096);
+    h.state_mut().session.cook();
+    h.state_mut().session.cooked.nodes.get_mut(&node).unwrap().key = 0;
+    h.state_mut().ui.prefs.preview_size = 4096;
+    h.step();
+    let (_, image) = h.state().session.view2d_image().unwrap();
+    assert_eq!((image.w, image.h), (4096, 4096));
+    assert_eq!(h.state().view2d.shown.as_ref().map(|(w, h, _)| (*w, *h)), Some((4096, 4096)));
+    h.state_mut().session.preview_size = Some(256);
+    h.state_mut().session.cook();
+    h.state_mut().session.cooked.nodes.get_mut(&node).unwrap().key = 0;
+    h.state_mut().ui.prefs.preview_size = 256;
+    h.step();
+    let (_, image) = h.state().session.view2d_image().unwrap();
+    assert_eq!((image.w, image.h), (256, 256));
+    assert_eq!(h.state().view2d.shown.as_ref().map(|(w, h, _)| (*w, *h)), Some((256, 256)));
+}
+
+#[test]
 fn command_resolution_survives_preferences_and_invalid_requests() {
     let mut app = app();
     let ctx = egui::Context::default();
