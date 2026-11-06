@@ -48,6 +48,10 @@ pub fn gaussian(img: &Image, sigma: f32, tile: bool) -> Image {
     out
 }
 
+/// Border handling: out-of-range taps are skipped and the accumulator is divided by the sum
+/// of in-range kernel weights (`wsum`), so edge pixels are averaged over in-range taps only.
+/// This changes small-sigma (sigma < 3) gaussian border output compared with a clamped-tap
+/// sum; constant images stay constant at the border.
 fn convolve_1d(src: &Image, k: &[f32], r: i64, horizontal: bool, tile: bool) -> Image {
     let c = src.channels();
     Image::generate(src.w, src.h, src.kind, |x, y| {
@@ -57,7 +61,7 @@ fn convolve_1d(src: &Image, k: &[f32], r: i64, horizontal: bool, tile: bool) -> 
             let o = i as i64 - r;
             let pos = if horizontal { x as i64 + o } else { y as i64 + o };
             let n = if horizontal { src.w } else { src.h } as i64;
-            if !tile && (pos < 0 || pos >= n) {
+            if pos < 0 || pos >= n {
                 continue;
             }
             let p = if horizontal { src.get(pos, y as i64, tile) } else { src.get(x as i64, pos, tile) };
@@ -82,27 +86,35 @@ fn box_1d(src: &Image, r: i64, horizontal: bool, tile: bool) -> Image {
     let (w, h) = (src.w as usize, src.h as usize);
     let c = src.channels();
     let inv = 1.0 / (2 * r + 1) as f32;
-    let mut data = vec![0.0f32; w * h * c];
     let line_len = if horizontal { w } else { h };
     // A window spanning the whole line gives the line mean at every position.
-    if !tile && 2 * r + 1 >= line_len as i64 {
-        return Image::generate(src.w, src.h, src.kind, |x, y| {
+    if 2 * r + 1 >= line_len as i64 {
+        let cc = c.clamp(1, 4);
+        let lines = if horizontal { h } else { w };
+        let inv_line = if line_len > 0 { 1.0 / line_len as f32 } else { 0.0 };
+        let mut means = vec![0.0f32; lines * cc];
+        for line in 0..lines {
             let mut acc = [0.0f32; 4];
             for i in 0..line_len {
-                let (px, py) = if horizontal { (i, y as usize) } else { (x as usize, i) };
-                let p = src.data.get((py * w + px) * c).copied().unwrap_or(0.0);
-                acc[0] += p;
-                for ch in 1..c {
+                let (px, py) = if horizontal { (i, line) } else { (line, i) };
+                for ch in 0..cc {
                     acc[ch] += src.data.get((py * w + px) * c + ch).copied().unwrap_or(0.0);
                 }
             }
-            let inv = 1.0 / line_len as f32;
-            for ch in 0..c {
-                acc[ch] *= inv;
+            for ch in 0..cc {
+                means[line * cc + ch] = acc[ch] * inv_line;
             }
-            acc
+        }
+        return Image::generate(src.w, src.h, src.kind, |x, y| {
+            let line = if horizontal { y as usize } else { x as usize };
+            let mut acc = [0.0f32; 4];
+            for ch in 0..cc {
+                acc[ch] = means.get(line * cc + ch).copied().unwrap_or(0.0);
+            }
+            if c == 1 { [acc[0], 0.0, 0.0, 0.0] } else { acc }
         });
     }
+    let mut data = vec![0.0f32; w * h * c];
     let lines = if horizontal { h } else { w };
     let get = |line: usize, i: i64, ch: usize| -> f32 {
         let n = line_len as i64;
@@ -484,6 +496,41 @@ mod tests {
         let r = hsl_to_rgb(h[0], h[1], h[2]);
         for k in 0..3 {
             assert!((r[k] - c[k]).abs() < 1e-5);
+        }
+    }
+
+    #[test]
+    fn gaussian_tiled_matches_untiled_for_oversized_radius() {
+        let img = Image::gray(4, 5, |x, y| ((x * 3 + y * 5) % 7) as f32 / 6.0);
+        for sigma in [2.0f32, 20.0] {
+            let tiled = gaussian(&img, sigma, true);
+            let untiled = gaussian(&img, sigma, false);
+            for y in 0..img.h as i64 {
+                for x in 0..img.w as i64 {
+                    let diff = (tiled.get(x, y, true)[0] - untiled.get(x, y, false)[0]).abs();
+                    assert!(diff < 1e-4, "sigma {sigma} pixel {x},{y} diff {diff}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn small_sigma_convolve_preserves_mean_on_narrow_image() {
+        // Impulse far enough from the edges that every affected tap is in range, so the
+        // renormalised convolve_1d passes must preserve the total (row/column) mean.
+        let img = Image::gray(10, 12, |x, y| if x == 5 && y == 6 { 1.0 } else { 0.0 });
+        let b = gaussian(&img, 0.6, false);
+        assert!((b.mean()[0] - img.mean()[0]).abs() < 1e-5, "mean {} vs {}", b.mean()[0], img.mean()[0]);
+        let row_sum: f32 = (0..10i64).map(|x| b.get(x, 6, false)[0]).sum();
+        let col_sum: f32 = (0..12i64).map(|y| b.get(5, y, false)[0]).sum();
+        assert!(row_sum > 0.0 && row_sum < 1.0, "row sum {row_sum}");
+        assert!(col_sum > 0.0 && col_sum < 1.0, "col sum {col_sum}");
+        // Edge renormalisation: a constant narrow image stays constant at the border.
+        let flat = gaussian(&Image::filled(6, 9, Kind::Gray, [0.5, 0.0, 0.0, 0.0]), 1.0, false);
+        for y in 0..9i64 {
+            for x in 0..6i64 {
+                assert!((flat.get(x, y, false)[0] - 0.5).abs() < 1e-5, "pixel {x},{y}");
+            }
         }
     }
 }
