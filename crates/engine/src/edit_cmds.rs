@@ -223,15 +223,7 @@ fn delete_relink(s: &mut Session, p: &J) -> Result<J> {
             // Port order comes from the node definition, not the order its wires were created.
             let node = graph_snapshot.node(*id).ok();
             let ports = s.input_ports(*id);
-            let has_value = node.is_some_and(|node| !node.input_values.is_empty());
-            let port = if has_value {
-                ports
-                    .iter()
-                    .find(|port| !node.is_some_and(|node| node.input_values.contains_key(*port)) && graph_snapshot.input_of(*id, port).is_some())
-                    .or_else(|| ports.iter().find(|port| graph_snapshot.input_of(*id, port).is_some()))
-            } else {
-                ports.first()
-            };
+            let port = ports.iter().find(|port| !node.is_some_and(|node| node.input_values.contains_key(*port)));
             let entry = port.and_then(|port| graph_snapshot.input_of(*id, port)).map(|c| (c.from, c.from_port.clone()));
             sources.insert(*id, entry);
         }
