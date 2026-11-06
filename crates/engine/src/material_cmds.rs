@@ -9,7 +9,7 @@ use materialcraft_core::Graph;
 use materialcraft_core::Value;
 use materialcraft_formats::material::{FORMAT, ImageInput, Manifest, MapEntry, Parameter, PresetEntry, VERSION, portable, srgb_usage};
 use materialcraft_formats::{Depth, encode};
-#[cfg(test)]
+#[cfg(any(test, not(target_arch = "wasm32")))]
 use materialcraft_image::Image;
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -151,6 +151,16 @@ pub fn material_request(s: &Session, cmd: &str, p: &J) -> Result<(usize, Materia
     let gi = graph_param(s, p)?;
     let o = MaterialOptions { size: u64p(p, "size").map(|v| v.min(8192) as u32), values: values_param(cmd, s.pkg.graph(gi)?, p)?, ..Default::default() };
     Ok((gi, o))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn load_inputs(read: impl Fn(&str) -> std::result::Result<Vec<u8>, String>, p: &J, inputs: &mut BTreeMap<String, Image>) -> Result<()> {
+    for (id, file) in p.get("inputs").and_then(J::as_object).into_iter().flatten() {
+        let file = file.as_str().ok_or_else(|| bad("material.export", format!("inputs.{id} must be an image path")))?;
+        let bytes = read(file).map_err(|e| bad("material.export", e))?;
+        inputs.insert(id.clone(), materialcraft_formats::decode(&bytes, false)?);
+    }
+    Ok(())
 }
 
 #[cfg(not(target_arch = "wasm32"))]
