@@ -16,4 +16,8 @@ pub struct MaterialExportParams {
     /// Exposed input values to cook with and embed, by input id (see `session_inspect`)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub values: Option<Value>,
+    /// Image files to read into the graph's image inputs, by input id. Paths are relative to the write
+    /// root's read rules; an id must name an image input of the graph
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inputs: Option<Value>,
 }

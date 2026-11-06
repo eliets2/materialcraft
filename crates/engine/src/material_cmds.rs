@@ -9,7 +9,7 @@ use materialcraft_core::Graph;
 use materialcraft_core::Value;
 use materialcraft_formats::material::{FORMAT, ImageInput, Manifest, MapEntry, Parameter, PresetEntry, VERSION, portable, srgb_usage};
 use materialcraft_formats::{Depth, encode};
-#[cfg(test)]
+#[cfg(any(test, not(target_arch = "wasm32")))]
 use materialcraft_image::Image;
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -154,17 +154,61 @@ pub fn material_request(s: &Session, cmd: &str, p: &J) -> Result<(usize, Materia
     Ok((gi, o))
 }
 
+/// Decoded bytes (four f32 channels per pixel) that all `inputs` of one request may hold together:
+/// two 8192 px colour inputs. A request's peak stays near 3 GiB: this budget plus the one image being decoded.
+#[cfg(not(target_arch = "wasm32"))]
+pub const MAX_INPUT_DECODED_BYTES: u64 = 2 << 30;
+
+/// Reads the `inputs` map (input id to image path) of an export request into `inputs`. Ids must name
+/// an image input of graph `g`, and the decoded images must fit `MAX_INPUT_DECODED_BYTES` together.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn load_inputs(cmd: &str, read: impl Fn(&str) -> std::result::Result<Vec<u8>, String>, g: &Graph, p: &J, inputs: &mut BTreeMap<String, Image>) -> Result<()> {
+    load_inputs_within(cmd, read, g, p, inputs, MAX_INPUT_DECODED_BYTES)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn load_inputs_within(
+    cmd: &str,
+    read: impl Fn(&str) -> std::result::Result<Vec<u8>, String>,
+    g: &Graph,
+    p: &J,
+    inputs: &mut BTreeMap<String, Image>,
+    budget: u64,
+) -> Result<()> {
+    let entries = match p.get("inputs") {
+        None | Some(J::Null) => return Ok(()),
+        Some(v) => v.as_object().ok_or_else(|| bad(cmd, "`inputs` maps input ids to image paths"))?,
+    };
+    let declared = image_inputs(g);
+    let mut total = 0u64;
+    for (id, file) in entries {
+        if !declared.iter().any(|i| i.identifier == *id) {
+            let names: Vec<&str> = declared.iter().map(|i| i.identifier.as_str()).collect();
+            return Err(bad(cmd, format!("no image input `{id}` in this graph (image inputs: {})", names.join(", "))));
+        }
+        let file = file.as_str().ok_or_else(|| bad(cmd, format!("inputs.{id} must be an image path")))?;
+        let bytes = read(file).map_err(|e| bad(cmd, e))?;
+        let image = materialcraft_formats::decode(&bytes, !srgb_usage(id))?;
+        let decoded = image.w as u64 * image.h as u64 * 16;
+        total = total.checked_add(decoded).filter(|t| *t <= budget).ok_or_else(|| bad(cmd, format!("the inputs decode to more than {budget} bytes in total")))?;
+        inputs.insert(id.clone(), image);
+    }
+    Ok(())
+}
+
+/// `load_inputs` for a request that cooks graph `gi` of session `s`.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn load_request_inputs(cmd: &str, read: impl Fn(&str) -> std::result::Result<Vec<u8>, String>, s: &Session, gi: usize, p: &J, o: &mut MaterialOptions) -> Result<()> {
+    load_inputs(cmd, read, s.pkg.graph(gi)?, p, &mut o.inputs)
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 fn export_material(s: &mut Session, p: &J) -> Result<J> {
     const CMD: &str = "file.exportMaterial";
     let path = strp(p, "path").ok_or_else(|| bad(CMD, "`path` is required"))?;
     let path = if path.to_ascii_lowercase().ends_with(&format!(".{MATERIAL_EXT}")) { path.to_string() } else { format!("{path}.{MATERIAL_EXT}") };
     let (gi, mut o) = material_request(s, CMD, p)?;
-    for (id, file) in p.get("inputs").and_then(J::as_object).into_iter().flatten() {
-        let file = file.as_str().ok_or_else(|| bad(CMD, format!("inputs.{id} must be an image path")))?;
-        let bytes = std::fs::read(file).map_err(|e| bad(CMD, format!("{file}: {e}")))?;
-        o.inputs.insert(id.clone(), materialcraft_formats::decode(&bytes, !srgb_usage(id))?);
-    }
+    load_request_inputs(CMD, |f| std::fs::read(f).map_err(|e| format!("{f}: {e}")), s, gi, p, &mut o)?;
     let bytes = material_bytes(s, gi, &o)?;
     materialcraft_formats::write_atomic(std::path::Path::new(&path), &bytes)?;
     s.log(format!("Exported material {path}"));
@@ -283,6 +327,34 @@ mod tests {
         crate::file_cmds::open_bytes(&mut s, &bytes, Some("x.mcmat".into())).unwrap();
         assert_eq!(s.graph().unwrap().name, m.graph);
         assert!(s.path.is_none());
+    }
+
+    #[test]
+    fn load_inputs_rejects_unknown_ids_and_repeated_paths_over_budget() {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let mut s = crate::sample_session();
+            crate::execute(&mut s, "graph.node.add", &json!({"def": "input_grayscale", "params": {"identifier": "curvature"}})).unwrap();
+            crate::execute(&mut s, "graph.node.add", &json!({"def": "input_grayscale", "params": {"identifier": "roughness"}})).unwrap();
+            let g = s.graph().unwrap();
+            let png = encode(&Image::filled(4, 4, materialcraft_image::Kind::Gray, [0.7; 4]), "png", Depth::U16, false).unwrap();
+            let read = |_: &str| Ok::<Vec<u8>, String>(png.clone());
+            let one_image = 4 * 4 * 16;
+
+            let mut inputs = BTreeMap::new();
+            assert!(load_inputs_within("t", read, g, &json!({"inputs": {"nope": "a.png"}}), &mut inputs, one_image).is_err());
+            assert!(inputs.is_empty());
+
+            // Repeated paths under distinct ids each retain a decoded copy, so the budget counts them
+            let mut inputs = BTreeMap::new();
+            let same_path = json!({"inputs": {"curvature": "a.png", "roughness": "a.png"}});
+            assert!(load_inputs_within("t", read, g, &same_path, &mut inputs, one_image).is_err());
+
+            let mut inputs = BTreeMap::new();
+            assert!(load_inputs_within("t", read, g, &json!({"inputs": {"curvature": "a.png"}}), &mut inputs, one_image).is_ok());
+            assert_eq!(inputs.len(), 1);
+            assert!(load_inputs_within("t", read, g, &json!({"inputs": "a.png"}), &mut BTreeMap::new(), one_image).is_err());
+        }
     }
 
     #[test]

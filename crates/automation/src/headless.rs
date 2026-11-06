@@ -208,7 +208,8 @@ impl Headless {
             Filesystem::TrustedLocal => {}
         }
 
-        let (gi, options) = material_cmds::material_request(&self.session, "material.export", p)?;
+        let (gi, mut options) = material_cmds::material_request(&self.session, "material.export", p)?;
+        material_cmds::load_request_inputs("material.export", |f| self.read(f).map_err(|e| e.to_string()), &self.session, gi, p, &mut options)?;
         let bytes = material_cmds::material_bytes(&self.session, gi, &options)?;
         if bytes.len() as u64 > MAX_EXPORTED_MATERIAL_BYTES {
             return Err(bad(format!("the material is {} bytes (limit {MAX_EXPORTED_MATERIAL_BYTES}); export a smaller `size`", bytes.len())));

@@ -302,7 +302,7 @@ mod tests {
         let base = std::env::temp_dir().join(format!("mc-mcp-{}-material", std::process::id()));
         let _ = std::fs::remove_dir_all(&base);
         std::fs::create_dir_all(&base).unwrap();
-        let args = || Parameters(MaterialExportParams { path: "m".into(), graph: None, size: Some(16), values: None });
+        let args = || Parameters(MaterialExportParams { path: "m".into(), graph: None, size: Some(16), values: None, inputs: None });
 
         let denied = MaterialCraftMcp::headless(Headless::new(materialcraft_engine::sample_session(), Filesystem::Denied));
         assert_eq!(denied.material_export(args()).await.unwrap().is_error, Some(true));
@@ -311,9 +311,29 @@ mod tests {
         let mcp = MaterialCraftMcp::headless(Headless::new(materialcraft_engine::sample_session(), Filesystem::Workspace(ws)));
         assert_eq!(mcp.material_export(args()).await.unwrap().is_error, Some(false));
         assert!(base.join("m.mcmat").is_file());
-        let escape = Parameters(MaterialExportParams { path: "../m.mcmat".into(), graph: None, size: Some(16), values: None });
+        let escape = Parameters(MaterialExportParams { path: "../m.mcmat".into(), graph: None, size: Some(16), values: None, inputs: None });
         assert_eq!(mcp.material_export(escape).await.unwrap().is_error, Some(true));
         assert!(!base.parent().unwrap().join("m.mcmat").exists());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn material_export_tool_forwards_inputs_to_the_workspace_loader() {
+        use base64::engine::general_purpose::STANDARD;
+        let base = std::env::temp_dir().join(format!("mc-mcp-{}-inputs", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        // A 1x1 PNG
+        let png = STANDARD.decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==").unwrap();
+        std::fs::write(base.join("curv.png"), &png).unwrap();
+        let mut s = materialcraft_engine::sample_session();
+        materialcraft_engine::execute(&mut s, "graph.node.add", &json!({"def": "input_grayscale", "params": {"identifier": "curvature"}})).unwrap();
+        let ws = crate::AuthorizedWorkspace::new(None, Some(&base)).unwrap();
+        let mcp = MaterialCraftMcp::headless(Headless::new(s, Filesystem::Workspace(ws)));
+        let with = |inputs: Value| Parameters(MaterialExportParams { path: "m2".into(), graph: None, size: Some(16), values: None, inputs: Some(inputs) });
+        assert_eq!(mcp.material_export(with(json!({"other": "curv.png"}))).await.unwrap().is_error, Some(true));
+        assert_eq!(mcp.material_export(with(json!({"curvature": "curv.png"}))).await.unwrap().is_error, Some(false));
+        assert!(base.join("m2.mcmat").is_file());
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]
