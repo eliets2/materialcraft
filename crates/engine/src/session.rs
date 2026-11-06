@@ -433,9 +433,14 @@ impl Session {
         let dec = self.resource_decoder();
         let mut opts = Options::new(&dec);
         opts.max_size = self.preview_size;
-        self.cooked = materialcraft_eval::cook(&self.pkg, self.graph, &opts, &self.cache);
+        // Clear `dirty` and bump the epoch before cooking: a background cook that
+        // started earlier is then stale even if it finishes while this cook runs,
+        // and an edit made during the cook sets `dirty` again instead of being
+        // cleared by the assignment after the cook (a lost wakeup that left the
+        // background cooker with nothing to do and `busy()` set).
         self.dirty = false;
         self.cook_epoch = self.cook_epoch.wrapping_add(1);
+        self.cooked = materialcraft_eval::cook(&self.pkg, self.graph, &opts, &self.cache);
         &self.cooked
     }
 

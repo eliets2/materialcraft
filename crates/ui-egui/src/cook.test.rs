@@ -7,14 +7,18 @@ mod cook_tests {
     use serde_json::json;
 
     fn wait_and_drive(app: &mut MaterialCraftApp, ctx: &egui::Context) {
-        for _ in 0..20000 {
+        // Bounded by elapsed time, not by iteration count: a slow hosted
+        // Windows runner needs wall-clock time, and an iteration cap made
+        // the same cook pass on one machine and time out on another.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+        while app.cooker.busy() {
             drive(app, ctx);
             if !app.cooker.busy() {
                 return;
             }
+            assert!(std::time::Instant::now() < deadline, "background cook never finished within 120s");
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
-        panic!("background cook never finished");
     }
 
     /// A background cook of version A lands after a synchronous cook of version B (as in
