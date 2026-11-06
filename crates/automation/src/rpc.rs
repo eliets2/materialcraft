@@ -349,9 +349,23 @@ mod tests {
     #[test]
     fn render_displacement_applies_without_hq() {
         let h = session();
-        let flat = call(&h, "render", json!({"width": 32, "height": 32, "displacement": 0.0})).unwrap();
-        let strong = call(&h, "render", json!({"width": 32, "height": 32, "displacement": 0.5})).unwrap();
+        let flat = call(&h, "render", json!({"width": 32, "height": 32, "hq": false, "displacement": 0.0})).unwrap();
+        let strong = call(&h, "render", json!({"width": 32, "height": 32, "hq": false, "displacement": 0.5})).unwrap();
+        let default = call(&h, "render", json!({"width": 32, "height": 32, "hq": false})).unwrap();
         assert_ne!(flat["png"], strong["png"], "displacement must change the 3D relief without hq");
+        assert_ne!(default["png"], strong["png"], "absent displacement must fall back to the default height scale, not strong displacement");
+        assert_eq!(default["png"], flat["png"], "absent displacement must fall back to the default height scale");
+    }
+
+    #[test]
+    fn render_displacement_applies_without_hq_review_regression_1() {
+        let h = session();
+        let flat = call(&h, "render", json!({"width": 32, "height": 32, "hq": false, "displacement": 0.0})).unwrap();
+        let strong = call(&h, "render", json!({"width": 32, "height": 32, "hq": false, "displacement": 0.5})).unwrap();
+        let default = call(&h, "render", json!({"width": 32, "height": 32, "hq": false})).unwrap();
+        assert_ne!(flat["png"], strong["png"], "displacement must change the 3D relief without hq");
+        assert_eq!(default["png"], flat["png"], "absent displacement must fall back to the default height scale");
+        assert_ne!(default["png"], strong["png"], "absent displacement must not apply strong displacement");
     }
 
     #[test]
