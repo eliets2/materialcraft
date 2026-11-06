@@ -13,6 +13,40 @@ pub const MESH_EXTENSIONS: &[&str] = &["obj", "glb", "gltf"];
 /// Largest mesh accepted (triangles).
 const MAX_TRIANGLES: usize = 4_000_000;
 
+/// Largest mesh accepted (vertices).
+const MAX_VERTICES: usize = 4_000_000;
+
+fn check_vertex_bound(current: usize, added: usize) -> Result<()> {
+    if current.checked_add(added).map_or(true, |total| total > MAX_VERTICES) {
+        return Err(bad("the mesh is too large"));
+    }
+    Ok(())
+}
+
+fn is_obj_vertex_line(line: &[u8]) -> bool {
+    let mut bytes = line.iter().copied().skip_while(|b| matches!(b, b' ' | b'\t'));
+    match (bytes.next(), bytes.next()) {
+        (Some(b'v'), Some(b' ') | Some(b'\t') | Some(b'\r')) | (Some(b'v'), None) => true,
+        _ => false,
+    }
+}
+
+/// Reject an OBJ whose raw vertex definitions exceed the bound before the
+/// parser allocates storage for them. Unreferenced vertices never reach the
+/// parsed mesh, so counting parsed vertices alone cannot bound this input.
+fn check_obj_vertex_bound(bytes: &[u8]) -> Result<()> {
+    let mut count = 0usize;
+    for line in bytes.split(|b| *b == b'\n') {
+        if is_obj_vertex_line(line) {
+            count = count.saturating_add(1);
+            if count > MAX_VERTICES {
+                return Err(bad("the mesh is too large"));
+            }
+        }
+    }
+    Ok(())
+}
+
 fn bad(msg: impl Into<String>) -> FormatError {
     FormatError::BadPackage(msg.into())
 }
@@ -81,6 +115,7 @@ pub fn load_mesh(name: &str, bytes: &[u8]) -> Result<Mesh> {
 }
 
 fn obj(bytes: &[u8]) -> Result<Mesh> {
+    check_obj_vertex_bound(bytes)?;
     let mut reader = std::io::BufReader::new(bytes);
     let opts = tobj::LoadOptions { triangulate: true, single_index: true, ..Default::default() };
     let (models, _) = crate::guard(
@@ -95,6 +130,7 @@ fn obj(bytes: &[u8]) -> Result<Mesh> {
         let base = positions.len() as u32;
         let mesh = &m.mesh;
         let n = mesh.positions.len() / 3;
+        check_vertex_bound(positions.len(), n)?;
         for i in 0..n {
             positions.push(Vec3::new(mesh.positions[i * 3], mesh.positions[i * 3 + 1], mesh.positions[i * 3 + 2]));
             if mesh.normals.len() == mesh.positions.len() {
@@ -129,8 +165,10 @@ fn gltf(bytes: &[u8]) -> Result<Mesh> {
             let reader = prim.reader(|b| buffers.get(b.index()).map(|d| d.0.as_slice()));
             let Some(pos) = reader.read_positions() else { continue };
             let base = positions.len() as u32;
-            let pos: Vec<Vec3> = pos.map(|p| m.transform_point3(Vec3::from(p))).collect();
-            let n = pos.len();
+            let pos_it = pos.map(|p| m.transform_point3(Vec3::from(p)));
+            let n = pos_it.len();
+            check_vertex_bound(positions.len(), n)?;
+            let pos: Vec<Vec3> = pos_it.collect();
             match reader.read_normals() {
                 Some(ns) => {
                     for q in ns {
@@ -242,6 +280,17 @@ mod tests {
         assert!(append_triangles(&mut out, indices, 1, 0, 1).is_err());
         assert_eq!(out, [0, 0, 0]);
         assert_eq!(read, 6);
+    }
+
+    #[test]
+    fn obj_with_excess_vertices_is_rejected() {
+        let mut obj = String::from("v 0 0 0\nv 1 0 0\nv 0 1 0\n");
+        for _ in 0..4_000_000 {
+            obj.push_str("v 1 0 0\n");
+        }
+        obj.push_str("f 1 2 3\n");
+
+        assert!(load_mesh("excess.obj", obj.as_bytes()).is_err());
     }
 
     #[test]
