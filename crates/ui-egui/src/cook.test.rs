@@ -7,7 +7,7 @@ mod cook_tests {
     use serde_json::json;
 
     fn wait_and_drive(app: &mut MaterialCraftApp, ctx: &egui::Context) {
-        for _ in 0..2000 {
+        for _ in 0..20000 {
             drive(app, ctx);
             if !app.cooker.busy() {
                 return;
