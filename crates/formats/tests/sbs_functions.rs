@@ -131,10 +131,38 @@ fn malformed_pow2_log2_cartesian_warn_and_keep_defaults() {
         xml(&(constant2.clone() + &constant + &node("5", "cartesian", "", &(wire("a", "6") + &wire("b", "3")))), "5", "blur", "intensity"),
         xml(&(constant.clone() + &constant2 + &node("5", "cartesian", "", &(wire("a", "3") + &wire("b", "6")))), "5", "blur", "intensity"),
         xml(&(constant2.clone() + &constant2b + &node("5", "cartesian", "", &(wire("a", "6") + &wire("b", "7")))), "5", "blur", "intensity"),
-        xml(&(constant.clone() + &node("5", "cartesian", "", &(wire("a", "3") + &wire("b", "3"))) + &node("2", "pow2", "", &wire("a", "5"))), "2", "blur", "intensity"),
-        xml(&(constant.clone() + &node("5", "cartesian", "", &(wire("a", "3") + &wire("b", "3"))) + &node("4", "log2", "", &wire("a", "5"))), "4", "blur", "intensity"),
-        xml(&(constant2.clone() + &node("2", "pow2", "", &wire("a", "6")) + &constant + &node("4", "log2", "", &wire("a", "3")) + &node("5", "cartesian", "", &(wire("a", "2") + &wire("b", "4")))), "5", "blur", "intensity"),
-        xml(&(constant2.clone() + &node("2", "pow2", "", &wire("a", "6")) + &constant2b + &node("4", "log2", "", &wire("a", "7")) + &node("5", "cartesian", "", &(wire("a", "2") + &wire("b", "4")))), "5", "blur", "intensity"),
+        xml(
+            &(constant.clone() + &node("5", "cartesian", "", &(wire("a", "3") + &wire("b", "3"))) + &node("2", "pow2", "", &wire("a", "5"))),
+            "2",
+            "blur",
+            "intensity",
+        ),
+        xml(
+            &(constant.clone() + &node("5", "cartesian", "", &(wire("a", "3") + &wire("b", "3"))) + &node("4", "log2", "", &wire("a", "5"))),
+            "4",
+            "blur",
+            "intensity",
+        ),
+        xml(
+            &(constant2.clone()
+                + &node("2", "pow2", "", &wire("a", "6"))
+                + &constant
+                + &node("4", "log2", "", &wire("a", "3"))
+                + &node("5", "cartesian", "", &(wire("a", "2") + &wire("b", "4")))),
+            "5",
+            "blur",
+            "intensity",
+        ),
+        xml(
+            &(constant2.clone()
+                + &node("2", "pow2", "", &wire("a", "6"))
+                + &constant2b
+                + &node("4", "log2", "", &wire("a", "7"))
+                + &node("5", "cartesian", "", &(wire("a", "2") + &wire("b", "4")))),
+            "5",
+            "blur",
+            "intensity",
+        ),
     ];
     for (case, text) in cases.into_iter().enumerate() {
         let report = read(&text);
