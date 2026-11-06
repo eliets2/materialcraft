@@ -282,6 +282,7 @@ pub(crate) fn defs() -> Vec<NodeDef> {
             .desc("Reconstructs a height map from a normal map.")
             .color_in("input", "Normal")
             .float("intensity", "Height scale", 1.0, 0.0, 10.0)
+            .choice("format", "Normal format", &["OpenGL", "DirectX"], 0)
             .gray_out()
             .cook(normal_to_height),
         // ---- Tiling
@@ -639,7 +640,7 @@ fn curvature(ctx: &Ctx) -> CookResult {
 
 fn morph(ctx: &Ctx, max: bool) -> CookResult {
     let img = src(ctx);
-    let r = ctx.i("radius").clamp(0, 64) as i64;
+    let r = (ctx.i("radius").clamp(0, 64) as f32 * ctx.w as f32 / 256.0).round() as i64;
     if r == 0 {
         return Ok(vec![img]);
     }
@@ -824,9 +825,11 @@ fn normal_to_height(ctx: &Ctx) -> CookResult {
         let v = unpack(p);
         [-v[0] / v[2].max(0.1), 0.0, 0.0, 0.0]
     });
+    let flip_y = ctx.i("format") == 1;
     let gy = n.map(Kind::Gray, |p| {
         let v = unpack(p);
-        [v[1] / v[2].max(0.1), 0.0, 0.0, 0.0]
+        let y = if flip_y { -v[1] } else { v[1] };
+        [y / v[2].max(0.1), 0.0, 0.0, 0.0]
     });
     let mut height = Image::filled(8.min(w), 8.min(h), Kind::Gray, [0.0; 4]);
     let mut size = 8u32;
