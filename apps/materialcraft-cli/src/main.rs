@@ -1,12 +1,11 @@
-//! Headless MaterialCraft command line: inspect, script, cook, export and render packages, and
-//! serve agents over MCP or JSON lines. Never opens a window.
+//! Headless MaterialCraft command line: inspect, script, cook, export and render packages, and serve agents over MCP or JSON lines. Never opens a window
 #![forbid(unsafe_code)]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 use std::sync::{Arc, Mutex};
 
 use materialcraft_automation::security::{client_token, server_token};
-use materialcraft_automation::{AuthorizedWorkspace, BridgeClient, Filesystem, Headless, MaterialcraftMcp, RenderOptions, rpc};
+use materialcraft_automation::{AuthorizedWorkspace, BridgeClient, Filesystem, Headless, MaterialCraftMcp, RenderOptions, rpc};
 use serde_json::{Value, json};
 
 const USAGE: &str = "\
@@ -14,7 +13,7 @@ materialcraft-cli: headless MaterialCraft
 
 USAGE:
   materialcraft-cli --version
-  materialcraft-cli info <package.sbs | package.mcraft | sample>
+  materialcraft-cli info <package.sbs | sample>
       Graphs, nodes, outputs and cook results, as JSON.
   materialcraft-cli commands [--filter <text>]
       List the engine commands (id, label, params).
@@ -25,8 +24,7 @@ USAGE:
   materialcraft-cli batch <script.json>
       Run [{\"id\", \"params\"}, ...] or {\"open\": <input>, \"steps\": [...], \"save\": <out.sbs>}.
   materialcraft-cli new <template> <out.sbs> [--size <px>] [--name <name>]
-      A new package with one graph from a template (empty, pbr, bricks, stone_tiles, wood,
-      metal_plates, rusty_metal, lava, marble, wicker, fabric, ground).
+      A new package with one graph from a template (empty, pbr, atomics).
   materialcraft-cli cook <input> [--graph <index>] [--set <input>=<value>]... [--full]
       Cook a graph and print per-node timings and errors.
   materialcraft-cli export <input> <dir> [--graph <index>] [--set <input>=<value>]... [--format <ext>]
@@ -45,8 +43,7 @@ USAGE:
   materialcraft-cli serve [--port <port>] [--read-root <dir>] [--write-root <dir>]
       JSON lines ({\"id\",\"method\",\"params\"}) on stdio, or on 127.0.0.1:<port> with a token.
 
-<input> is an .sbs or .mcraft package or `sample` (the built-in brick wall). Packages save as SBS
-unless the output path ends in .mcraft. --set gives a graph input a value
+<input> is an .sbs package or `sample` (the built-in atomic sample). Packages save as native SBS. --set gives a graph input a value
 (JSON, e.g. `--set roughness=0.4 --set tint=\"#aa7744\"`) before cooking. See docs/control-protocol.md.
 ";
 
@@ -120,7 +117,7 @@ fn version() -> String {
     }
 }
 
-/// A headless session on `input` (an .sbs or .mcraft package, or `sample`), with local file access.
+/// A headless session on `input` (an .sbs package, or `sample`), with local file access
 fn open(input: &str) -> Result<Headless, String> {
     let mut h = Headless::new(Headless::default_session(), Filesystem::TrustedLocal);
     if input != "sample" {
@@ -133,7 +130,7 @@ fn print(v: &Value) {
     println!("{}", serde_json::to_string_pretty(v).unwrap_or_else(|e| format!("{{\"error\": \"{e}\"}}")));
 }
 
-/// Open `--graph` and apply every `--set <input>=<value>` (the value is JSON, else a string).
+/// Open `--graph` and apply every `--set <input>=<value>` (the value is JSON, else a string)
 fn select_graph(h: &mut Headless, a: &Args) -> Result<(), String> {
     if let Some(g) = a.num::<u64>("--graph")? {
         h.command_run("graph.open", json!({"graph": g})).map_err(|e| e.to_string())?;
@@ -189,6 +186,7 @@ fn run(cmd: &str, a: &Args) -> Result<(), String> {
                 Some(p) => serde_json::from_str(p).map_err(|e| format!("params: {e}"))?,
                 None => Value::Null,
             };
+
             print(&h.command_run(id, params).map_err(|e| e.to_string())?);
             if let Some(out) = a.get("-o") {
                 h.save(Some(out)).map_err(|e| e.to_string())?;
@@ -205,6 +203,7 @@ fn run(cmd: &str, a: &Args) -> Result<(), String> {
                     obj.get("save").and_then(Value::as_str),
                 ),
             };
+
             let mut h = open(input)?;
             let r = h.batch(&steps);
             print(&r);
@@ -248,6 +247,7 @@ fn run(cmd: &str, a: &Args) -> Result<(), String> {
                 }
                 None => (None, None),
             };
+
             let o = RenderOptions {
                 view: a.get("--view").map(str::to_string),
                 width: w,
@@ -262,6 +262,7 @@ fn run(cmd: &str, a: &Args) -> Result<(), String> {
                 hq: a.has("--hq"),
                 displacement: a.num("--displacement")?,
             };
+
             let r = h.render_png(&o).map_err(|e| e.to_string())?;
             materialcraft_engine::formats::write_atomic(std::path::Path::new(out), &r.png).map_err(|e| e.to_string())?;
             print(&json!({"path": out, "width": r.width, "height": r.height}));
@@ -271,18 +272,18 @@ fn run(cmd: &str, a: &Args) -> Result<(), String> {
             let server = match a.num::<u16>("--bridge")? {
                 Some(port) => {
                     let token = client_token(port, a.get("--token").map(str::to_string)).map_err(|e| e.to_string())?;
-                    MaterialcraftMcp::bridge(BridgeClient::new(port, token))
+                    MaterialCraftMcp::bridge(BridgeClient::new(port, token))
                 }
-                None => MaterialcraftMcp::headless(Headless::new(Headless::default_session(), workspace(a)?)),
+                None => MaterialCraftMcp::headless(Headless::new(Headless::default_session(), workspace(a)?)),
             };
+
             rt.block_on(server.serve_stdio()).map_err(|e| e.to_string())?;
         }
         "serve" => {
             let h = Arc::new(Mutex::new(Headless::new(Headless::default_session(), workspace(a)?)));
             match a.num::<u16>("--port")? {
                 Some(port) => {
-                    // Bind first: a port in use must not replace its server's token file, and port 0's
-                    // token file is named after the port actually picked.
+                    // Bind first: a port in use must not replace its server's token file, and port 0's token file is named after the port actually picked
                     let listener = rpc::bind_tcp(port).map_err(|e| e.to_string())?;
                     let addr = listener.local_addr().map_err(|e| e.to_string())?;
                     let (token, file) = server_token(addr.port()).map_err(|e| e.to_string())?;
@@ -300,7 +301,7 @@ fn run(cmd: &str, a: &Args) -> Result<(), String> {
     Ok(())
 }
 
-/// File access for servers: none without roots, else only below them.
+/// File access for servers: none without roots, else only below them
 fn workspace(a: &Args) -> Result<Filesystem, String> {
     let (r, w) = (a.get("--read-root"), a.get("--write-root"));
     if r.is_none() && w.is_none() {

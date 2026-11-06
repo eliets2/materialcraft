@@ -1,10 +1,13 @@
-//! Node commands: add, move, rename, disable, parameters, base parameters, bindings, wires.
+//! Node commands: add, move, rename, disable, parameters, base parameters, bindings, wires
 
 use serde_json::{Value as J, json};
 
-use materialcraft_core::{NodeId, OutputFormat, SizeMode, Value};
+use materialcraft_core::{FunctionGraph, NodeId, OutputFormat, SizeMode, Value, ValueType};
 
-use crate::commands::{CommandSpec, bad, boolp, has_graph, has_selection, i64p, ids_param, node_param, point, strp, u64p};
+use crate::connection_commands::connection_input;
+use crate::graph_grid::snap_position;
+
+use crate::commands::{CommandSpec, bad, boolp, has_graph, has_selection, i64p, ids_param, node_param, point, strp};
 use crate::{Result, Session, cmd};
 
 pub(crate) fn specs() -> Vec<CommandSpec> {
@@ -14,11 +17,11 @@ pub(crate) fn specs() -> Vec<CommandSpec> {
             "Add node",
             [],
             None,
-            "{def (see library.list), at? [x, y], params? {id: value}, connectFrom? {node, port?} wires that output into the new node's first input, label?}",
+            "{def (see library.list), at? [x, y], snapToGrid? bool, params? {id: value}, connectFrom? {node, port?} wires that output into the new node's first input, label?}",
             has_graph,
             add
         ),
-        cmd!("graph.node.move", "Move nodes", [], None, "{ids?, by? [dx, dy], to? [x, y] (single node)}", has_selection, move_nodes),
+        cmd!("graph.node.move", "Move nodes", [], None, "{ids?, by? [dx, dy], to? [x, y], snapToGrid? bool}", has_selection, move_nodes),
         cmd!("graph.node.rename", "Rename node", [], None, "{id?, label}", has_selection, rename),
         cmd!("graph.node.disable", "Disable selection", [], Some("Shift+D"), "{ids?, disabled? (default: toggle)}", has_selection, disable),
         cmd!(
@@ -50,27 +53,37 @@ pub(crate) fn specs() -> Vec<CommandSpec> {
             has_selection,
             set_function
         ),
-        cmd!("graph.connect", "Connect", [], None, "{from, fromPort? (output), to, toPort? (first input)}", has_graph, connect),
-        cmd!("graph.disconnect", "Disconnect", [], None, "{to, toPort}", has_graph, disconnect),
     ]
 }
 
 fn add(s: &mut Session, p: &J) -> Result<J> {
+    if s.graph()?.function.is_some() {
+        return Err(bad("graph.node.add", "use function operations in a Function Graph"));
+    }
+
     let def = strp(p, "def").ok_or_else(|| bad("graph.node.add", "`def` is required (see library.list)"))?.to_string();
     let catalog = materialcraft_nodes::find(&def);
     if catalog.is_none() {
         return Err(bad("graph.node.add", format!("unknown node `{def}`")));
     }
-    // Typed parameter values, checked against the catalog.
+    // Typed parameter values, checked against the catalog
     let mut params = Vec::new();
     if let Some(obj) = p.get("params").and_then(J::as_object) {
         for (k, v) in obj {
             let v = if def == "graph_instance" && k == "graph" {
                 Value::Text(v.as_str().ok_or_else(|| bad("graph.node.add", "`graph` is a graph name"))?.into())
+            } else if def == "input_value" && k == "default" {
+                serde_json::from_value::<Value>(v.clone())
+                    .ok()
+                    .or_else(|| Value::Float(0.0).coerce_json(v))
+                    .filter(|value| materialcraft_core::ValueType::of(value).is_some())
+                    .ok_or_else(|| bad("graph.node.add", "default must be a scalar or vector value"))?
             } else {
                 let pd = catalog.and_then(|d| d.param(k)).ok_or_else(|| bad("graph.node.add", format!("`{def}` has no parameter `{k}`")))?;
                 pd.default.coerce_json(v).ok_or_else(|| bad("graph.node.add", format!("`{k}` takes a {}", pd.default.type_name())))?
             };
+
+            crate::graph_validation::value(&v).map_err(|error| bad("graph.node.add", error))?;
             params.push((k.clone(), v));
         }
     }
@@ -80,15 +93,28 @@ fn add(s: &mut Session, p: &J) -> Result<J> {
         let src = from.as_ref().and_then(|(n, _)| g.and_then(|g| g.node(*n).ok()));
         src.map_or([0.0, 0.0], |n| [n.pos[0] + 150.0, n.pos[1]])
     });
+    let at = snap_position(at, boolp(p, "snapToGrid").unwrap_or(false));
     let label = strp(p, "label").unwrap_or("").to_string();
     s.edit("Add node", |s| {
         let g = s.graph_mut()?;
         let id = g.add_node(&def, at);
         let n = g.node_mut(id)?;
         n.label = label;
+        if let Some(parameter) = catalog.and_then(|definition| definition.param("pattern")) {
+            n.params.insert("pattern".into(), parameter.default.clone());
+        }
+
+        if def == "value_processor" {
+            n.input_values.insert("value1".into(), ValueType::Float);
+            let mut function = FunctionGraph::default();
+            function.output = Some(function.add("get_float1", &[], Some(Value::Text("value1".into()))));
+            n.params.insert("function".into(), Value::Function(Box::new(function)));
+        }
+
         n.params.extend(params);
+
         if let Some((src, port)) = from {
-            let first = s.input_ports(id).into_iter().next().ok_or_else(|| bad("graph.node.add", format!("`{def}` has no inputs")))?;
+            let first = connection_input(s, src, &port, id)?;
             s.graph_mut()?.connect(src, &port, id, &first)?;
         }
         s.selection = vec![id];
@@ -103,13 +129,15 @@ fn move_nodes(s: &mut Session, p: &J) -> Result<J> {
     if by.is_none() && to.is_none() {
         return Err(bad("graph.node.move", "`by` or `to` is required"));
     }
+    let snap = boolp(p, "snapToGrid").unwrap_or(false);
+
     s.edit("Move nodes", |s| {
         let g = s.graph_mut()?;
         for n in g.nodes.iter_mut().filter(|n| ids.contains(&n.id)) {
             if let Some(t) = to {
-                n.pos = t;
+                n.pos = snap_position(t, snap);
             } else if let Some(d) = by {
-                n.pos = [n.pos[0] + d[0], n.pos[1] + d[1]];
+                n.pos = crate::graph_grid::translate(n.pos, d, snap);
             }
         }
         Ok(J::Null)
@@ -142,8 +170,15 @@ fn set_param(s: &mut Session, p: &J) -> Result<J> {
     let param = strp(p, "param").ok_or_else(|| bad("graph.node.param", "`param` is required"))?.to_string();
     let v = p.get("value").ok_or_else(|| bad("graph.node.param", "`value` is required"))?;
     let node = s.graph()?.node(id)?.clone();
-    let value = if node.def == "graph_instance" {
-        // Instance parameters: the sub-graph's exposed inputs (and `graph`).
+    let value = if node.def == "input_value" && param == "default" {
+        let current = node.params.get("default").cloned().unwrap_or(Value::Float(0.0));
+        serde_json::from_value::<Value>(v.clone())
+            .ok()
+            .or_else(|| current.coerce_json(v))
+            .filter(|value| materialcraft_core::ValueType::of(value).is_some())
+            .ok_or_else(|| bad("graph.node.param", "default must be a scalar or vector value"))?
+    } else if node.def == "graph_instance" {
+        // Instance parameters: the sub-graph's exposed inputs (and `graph`)
         if param == "graph" {
             Value::Text(v.as_str().ok_or_else(|| bad("graph.node.param", "`graph` is a graph name"))?.into())
         } else {
@@ -163,6 +198,9 @@ fn set_param(s: &mut Session, p: &J) -> Result<J> {
         }
         v
     };
+
+    crate::graph_validation::value(&value).map_err(|error| bad("graph.node.param", error))?;
+
     s.edit_merged(&format!("param:{}:{param}", id.0), "Set parameter", |s| {
         s.graph_mut()?.node_mut(id)?.params.insert(param.clone(), value);
         Ok(J::Null)
@@ -199,6 +237,7 @@ fn base(s: &mut Session, p: &J) -> Result<J> {
         Some("absolute") => Some(SizeMode::Absolute),
         Some(o) => return Err(bad("graph.node.base", format!("unknown sizeMode `{o}`"))),
     };
+
     let format = match strp(p, "format") {
         None => None,
         Some("inherit") => Some(OutputFormat::Inherit),
@@ -208,6 +247,7 @@ fn base(s: &mut Session, p: &J) -> Result<J> {
         Some("f32") => Some(OutputFormat::F32),
         Some(o) => return Err(bad("graph.node.base", format!("unknown format `{o}`"))),
     };
+
     let size = p
         .get("size")
         .and_then(J::as_array)
@@ -250,6 +290,7 @@ fn bind(s: &mut Session, p: &J) -> Result<J> {
             Some(i) => n.bindings.insert(param, i),
             None => n.bindings.remove(&param),
         };
+
         Ok(J::Null)
     })
 }
@@ -271,68 +312,17 @@ fn set_function(s: &mut Session, p: &J) -> Result<J> {
     }
     let f = match p.get("function") {
         Some(f) if !f.is_null() => {
-            serde_json::from_value::<materialcraft_core::function::FnGraph>(f.clone()).map_err(|e| bad("graph.node.function", format!("bad function: {e}")))?
+            serde_json::from_value::<materialcraft_core::FunctionGraph>(f.clone()).map_err(|e| bad("graph.node.function", format!("bad function: {e}")))?
         }
         _ => match node.functions.get(&param) {
             Some(f) => f.clone(),
-            None => materialcraft_core::function::FnGraph::constant(node.params.get(&param).cloned().unwrap_or_else(|| pd.default.clone())),
+            None => materialcraft_core::FunctionGraph::constant(node.params.get(&param).cloned().unwrap_or_else(|| pd.default.clone())),
         },
     };
-    if f.nodes.len() > 4096 {
-        return Err(bad("graph.node.function", "the function is too large"));
-    }
+
+    crate::graph_validation::function(&f).map_err(|error| bad("graph.node.function", error))?;
     s.edit_merged(&format!("fn:{}:{param}", id.0), "Set parameter function", |s| {
         s.graph_mut()?.node_mut(id)?.functions.insert(param.clone(), f);
         Ok(J::Null)
     })
-}
-
-fn connect(s: &mut Session, p: &J) -> Result<J> {
-    let from = NodeId(u64p(p, "from").ok_or_else(|| bad("graph.connect", "`from` is required"))?);
-    let to = NodeId(u64p(p, "to").ok_or_else(|| bad("graph.connect", "`to` is required"))?);
-    let (ins, outs) = (s.input_ports(to), s.output_ports(from));
-    let from_port =
-        strp(p, "fromPort").map(str::to_string).or_else(|| outs.first().cloned()).ok_or_else(|| bad("graph.connect", "the source has no outputs"))?;
-    let to_port = strp(p, "toPort").map(str::to_string).or_else(|| ins.first().cloned()).ok_or_else(|| bad("graph.connect", "the target has no inputs"))?;
-    if !outs.contains(&from_port) {
-        return Err(bad("graph.connect", format!("no output `{from_port}` on node {} (has {outs:?})", from.0)));
-    }
-    if !ins.contains(&to_port) {
-        return Err(bad("graph.connect", format!("no input `{to_port}` on node {} (has {ins:?})", to.0)));
-    }
-    s.edit("Connect", |s| {
-        s.graph_mut()?.connect(from, &from_port, to, &to_port)?;
-        Ok(J::Null)
-    })
-}
-
-fn disconnect(s: &mut Session, p: &J) -> Result<J> {
-    let to = NodeId(u64p(p, "to").ok_or_else(|| bad("graph.disconnect", "`to` is required"))?);
-    let port = strp(p, "toPort").ok_or_else(|| bad("graph.disconnect", "`toPort` is required"))?.to_string();
-    s.edit("Disconnect", |s| {
-        if !s.graph_mut()?.disconnect(to, &port) {
-            return Err(bad("graph.disconnect", "nothing is connected there"));
-        }
-        Ok(J::Null)
-    })
-}
-
-impl Session {
-    /// Input port ids of node `id` (empty for a missing node).
-    pub fn input_ports(&self, id: NodeId) -> Vec<String> {
-        self.graph()
-            .ok()
-            .and_then(|g| g.node(id).ok())
-            .map(|n| materialcraft_eval::ports(&self.pkg, n).0.into_iter().map(|p| p.id).collect())
-            .unwrap_or_default()
-    }
-
-    /// Output port ids of node `id`.
-    pub fn output_ports(&self, id: NodeId) -> Vec<String> {
-        self.graph()
-            .ok()
-            .and_then(|g| g.node(id).ok())
-            .map(|n| materialcraft_eval::ports(&self.pkg, n).1.into_iter().map(|p| p.id).collect())
-            .unwrap_or_default()
-    }
 }

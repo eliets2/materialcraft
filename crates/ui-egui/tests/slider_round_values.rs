@@ -8,9 +8,9 @@ use materialcraft_engine::core::{NodeId, Value};
 use materialcraft_ui_egui::{MaterialCraftApp, UiState};
 use serde_json::json;
 
-fn harness(ppp: f32, render: bool) -> (Harness<'static, MaterialCraftApp>, NodeId) {
+fn harness(ppp: f32, render: bool, definition: &str) -> (Harness<'static, MaterialCraftApp>, NodeId) {
     let mut app = MaterialCraftApp::headless(materialcraft_engine::new_session(), UiState::default());
-    let id = NodeId(app.run("graph.node.add", json!({"def":"transformation"})).unwrap()["id"].as_u64().unwrap());
+    let id = NodeId(app.run("graph.node.add", json!({"def":definition})).unwrap()["id"].as_u64().unwrap());
     app.session.reset_history();
     let builder = Harness::builder().with_size(vec2(1600.0, 960.0)).with_pixels_per_point(ppp).with_step_dt(1.0 / 60.0);
     let builder = if render { builder.wgpu() } else { builder };
@@ -42,11 +42,11 @@ fn drag_near(h: &mut Harness<'static, MaterialCraftApp>, label: &str, index: usi
     h.step();
     h.run_steps(3);
 }
-fn rotation(h: &Harness<'static, MaterialCraftApp>, id: NodeId) -> f32 {
-    match h.state().session.graph().unwrap().node(id).unwrap().params.get("rotation") {
+fn angle_value(h: &Harness<'static, MaterialCraftApp>, id: NodeId) -> f32 {
+    match h.state().session.graph().unwrap().node(id).unwrap().params.get("angle") {
         Some(Value::Float(v)) => *v,
         None => 0.0,
-        other => panic!("unexpected rotation {other:?}"),
+        other => panic!("unexpected angle {other:?}"),
     }
 }
 
@@ -54,14 +54,14 @@ fn rotation(h: &Harness<'static, MaterialCraftApp>, id: NodeId) -> f32 {
 fn dragging_can_reach_exact_round_angles_at_multiple_pixel_scales() {
     for ppp in [1.0, 2.0] {
         for angle in [90.0, -90.0, 0.0, 360.0, -360.0] {
-            let (mut h, id) = harness(ppp, false);
-            drag_near(&mut h, "Rotation", 0, angle, -360.0, 360.0);
-            assert_eq!(rotation(&h, id), angle / 360.0, "angle={angle}, pixels_per_point={ppp}");
+            let (mut h, id) = harness(ppp, false, "directional_blur");
+            drag_near(&mut h, "Angle", 0, angle, -360.0, 360.0);
+            assert_eq!(angle_value(&h, id), angle / 360.0, "angle={angle}, pixels_per_point={ppp}");
             if angle == 90.0 {
                 h.state_mut().run("edit.undo", json!({})).unwrap();
-                assert_eq!(rotation(&h, id), 0.0);
+                assert_eq!(angle_value(&h, id), 0.0);
                 h.state_mut().run("edit.redo", json!({})).unwrap();
-                assert_eq!(rotation(&h, id), 0.25);
+                assert_eq!(angle_value(&h, id), 0.25);
             }
         }
     }
@@ -69,20 +69,19 @@ fn dragging_can_reach_exact_round_angles_at_multiple_pixel_scales() {
 
 #[test]
 fn fractional_parameter_values_remain_reachable() {
-    let (mut h, id) = harness(1.0, false);
-    drag_near(&mut h, "X", 1, 1.5, 0.01, 10.0);
+    let (mut h, id) = harness(1.0, false, "transformation");
+    drag_near(&mut h, "Y", 0, 0.25, -1.0, 1.0);
     drag_near(&mut h, "X", 0, -0.5, -1.0, 1.0);
     let n = h.state().session.graph().unwrap().node(id).unwrap();
-    assert_eq!(n.params.get("scale"), Some(&Value::Float2([1.5, 1.0])));
-    assert_eq!(n.params.get("offset"), Some(&Value::Float2([-0.5, 0.0])));
+    assert_eq!(n.params.get("offset"), Some(&Value::Float2([-0.5, 0.25])));
 }
 
 #[test]
 #[ignore = "requires an offscreen GPU"]
 fn exact_angle_screenshot() {
-    let (mut h, id) = harness(1.0, true);
-    drag_near(&mut h, "Rotation", 0, 90.0, -360.0, 360.0);
-    assert_eq!(rotation(&h, id), 0.25);
+    let (mut h, id) = harness(1.0, true, "directional_blur");
+    drag_near(&mut h, "Angle", 0, 90.0, -360.0, 360.0);
+    assert_eq!(angle_value(&h, id), 0.25);
     let dir = std::path::PathBuf::from(std::env::var_os("MC_SNAPSHOT_DIR").expect("set MC_SNAPSHOT_DIR"));
     std::fs::create_dir_all(&dir).unwrap();
     h.render().unwrap().save(dir.join("rotation-90.png")).unwrap();
