@@ -4,8 +4,8 @@ use serde_json::json;
 #[test]
 fn rejected_2d_settings_leave_the_view_unchanged() {
     let mut s = new_session();
-    let a = execute(&mut s, "graph.node.add", &json!({"def": "rgba_split"})).unwrap()["id"].as_u64().unwrap();
-    let b = execute(&mut s, "graph.node.add", &json!({"def": "rgba_split"})).unwrap()["id"].as_u64().unwrap();
+    let a = execute(&mut s, "graph.node.add", &json!({"def": "channels_shuffle"})).unwrap()["id"].as_u64().unwrap();
+    let b = execute(&mut s, "graph.node.add", &json!({"def": "channels_shuffle"})).unwrap()["id"].as_u64().unwrap();
     execute(&mut s, "view.2d", &json!({"node": a, "port": 1, "channel": "g"})).unwrap();
     let before = s.view2d.clone();
     // A bad channel used to leave all the preceding fields changed despite returning an error.

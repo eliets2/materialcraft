@@ -1,15 +1,3 @@
-//! Headless JSON-lines server with the app's control-channel envelope:
-//! `{"id","method","params"}` → `{"id","ok":true,"result"}` | `{"id","ok":false,"error"}`.
-//! `materialcraft-cli serve` runs it on stdio or on a loopback TCP port (first request `auth`).
-//!
-//! Methods: the app's `ping`, `command.run {id, params?}`, `command.list {filter?}`,
-//! `session.inspect`, plus `command.batch {steps}`, `package.open {path}`, `package.save {path?}`,
-//! `bitmap.import {path, name?}`, `outputs.export {dir, format?, pattern?, depth?, graph?}`,
-//! `material.export {path, graph?, size?, values?}` (workspace-scoped versions of the engine
-//! commands; the last writes a portable `.mcmat`), `render {view?, width?, height?, yaw?,
-//! pitch?, scene?, node?, port?, full?}` (PNG base64, the shape of the app's `view.screenshot`)
-//! and `methods`.
-
 use std::io::{BufRead, Write};
 use std::net::TcpListener;
 use std::sync::{Arc, Mutex, PoisonError};
@@ -69,7 +57,7 @@ fn required<'a>(p: &'a Value, k: &str) -> Result<&'a str, AutomationError> {
 }
 
 impl Headless {
-    /// Dispatch one request. Unknown methods and bad params are errors, never panics.
+    /// Dispatch one request. Unknown methods and bad params are errors, never panics
     pub fn handle(&mut self, method: &str, p: &Value) -> Result<Value, AutomationError> {
         match method {
             "ping" => Ok(json!("pong")),
@@ -104,6 +92,7 @@ impl Headless {
                     hq: bool_of(p, "hq")?,
                     displacement: f32_of(p, "displacement")?,
                 };
+
                 let r = self.render_png(&o)?;
                 Ok(json!({ "width": r.width, "height": r.height, "png": base64::engine::general_purpose::STANDARD.encode(r.png) }))
             }
@@ -115,17 +104,18 @@ impl Headless {
     }
 }
 
-/// Answer one request line. A panic inside a command becomes an error reply (edits run on a
-/// snapshot, so the session stays consistent).
+/// Answer one request line. A panic inside a command becomes an error reply (edits run on a snapshot, so the session stays consistent)
 pub fn respond(h: &Mutex<Headless>, line: &str) -> Value {
     let req: Value = match serde_json::from_str(line) {
         Ok(v) => v,
         Err(e) => return json!({"id": null, "ok": false, "error": format!("bad JSON: {e}")}),
     };
+
     let id = req.get("id").cloned().unwrap_or(Value::Null);
     let Some(method) = req.get("method").and_then(Value::as_str) else {
         return json!({"id": id, "ok": false, "error": "`method` is required"});
     };
+
     let params = req.get("params").cloned().unwrap_or(Value::Null);
     let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| h.lock().unwrap_or_else(PoisonError::into_inner).handle(method, &params)))
         .unwrap_or_else(|_| Err(AutomationError::Other(format!("internal error in `{method}`"))));
@@ -135,14 +125,14 @@ pub fn respond(h: &Mutex<Headless>, line: &str) -> Value {
     }
 }
 
-/// Write one reply line; an oversized reply becomes an error with the same id.
+/// Write one reply line; an oversized reply becomes an error with the same id
 fn write_reply(w: &mut impl Write, reply: &Value) -> std::io::Result<()> {
     let text = json_text(reply).unwrap_or_else(|e| json!({"id": reply.get("id"), "ok": false, "error": e.to_string()}).to_string());
     writeln!(w, "{text}")?;
     w.flush()
 }
 
-/// Serve JSON lines from `r` to `w` until EOF (stdio mode: no authentication).
+/// Serve JSON lines from `r` to `w` until EOF (stdio mode: no authentication)
 pub fn serve_lines(h: &Mutex<Headless>, mut r: impl BufRead, mut w: impl Write) -> std::io::Result<()> {
     let mut line = String::new();
     loop {
@@ -154,11 +144,12 @@ pub fn serve_lines(h: &Mutex<Headless>, mut r: impl BufRead, mut w: impl Write) 
             Ok(LineRead::Line) if line.trim().is_empty() => continue,
             Ok(LineRead::Line) => respond(h, &line),
         };
+
         write_reply(&mut w, &reply)?;
     }
 }
 
-/// One TCP connection: the first request must be `auth {token}`, as on the app's channel.
+/// One TCP connection: the first request must be `auth {token}`, as on the app's channel
 fn serve_connection(h: &Mutex<Headless>, stream: std::net::TcpStream, token: &str) -> std::io::Result<()> {
     stream.set_read_timeout(Some(std::time::Duration::from_secs(600)))?;
     let mut r = std::io::BufReader::new(stream.try_clone()?);
@@ -189,20 +180,19 @@ fn serve_connection(h: &Mutex<Headless>, stream: std::net::TcpStream, token: &st
     }
 }
 
-/// Listen on `127.0.0.1:port` (0 picks a port).
+/// Listen on `127.0.0.1:port` (0 picks a port)
 pub fn bind_tcp(port: u16) -> Result<TcpListener, AutomationError> {
     TcpListener::bind(("127.0.0.1", port)).map_err(|e| AutomationError::Io(format!("cannot listen on 127.0.0.1:{port}: {e}")))
 }
 
-/// Serve authenticated JSON lines on `127.0.0.1:port` (0 picks a port) with one shared
-/// session. `ready` gets the bound address.
+/// Serve authenticated JSON lines on `127.0.0.1:port` (0 picks a port) with one shared session. `ready` gets the bound address
 pub fn serve_tcp(port: u16, h: Arc<Mutex<Headless>>, token: String, ready: impl FnOnce(std::net::SocketAddr)) -> Result<(), AutomationError> {
     let listener = bind_tcp(port)?;
     ready(listener.local_addr().map_err(|e| AutomationError::Io(e.to_string()))?);
     serve_listener(listener, h, token)
 }
 
-/// Serve authenticated JSON lines on a bound listener (see [`bind_tcp`]) with one shared session.
+/// Serve authenticated JSON lines on a bound listener (see [`bind_tcp`]) with one shared session
 pub fn serve_listener(listener: TcpListener, h: Arc<Mutex<Headless>>, token: String) -> Result<(), AutomationError> {
     let limiter = ConnectionLimiter::default();
     let token = Arc::new(token);
@@ -212,6 +202,7 @@ pub fn serve_listener(listener: TcpListener, h: Arc<Mutex<Headless>>, token: Str
             let _ = writeln!(stream, "{}", json!({"id": null, "ok": false, "error": "too many connections"}));
             continue;
         };
+
         let (h, token) = (h.clone(), token.clone());
         if let Err(e) = std::thread::Builder::new().name("materialcraft-rpc-client".into()).spawn(move || {
             let _permit = permit;
@@ -251,7 +242,7 @@ mod tests {
             r#"{"id":4,"method":"command.run","params":{"id":"file.open","params":{"path":"/etc/passwd"}}}"#,
             "
 ",
-            r#"{"id":5,"method":"package.open","params":{"path":"x.mcraft"}}"#,
+            r#"{"id":5,"method":"package.open","params":{"path":"x.sbs"}}"#,
             "
 ",
             r#"{"id":6,"method":"command.batch","params":{"steps":[{"id":"edit.selectAll"},{"id":"nope"},{"id":"edit.selectAll"}]}}"#,
@@ -298,7 +289,7 @@ mod tests {
         assert_eq!(r["bytes"], bytes.len());
         let (m, source) = materialcraft_engine::formats::material::read_material(&bytes).unwrap();
         assert_eq!(m.size, [32, 32]);
-        assert!(m.maps.iter().any(|e| e.usage == "baseColor"));
+        assert!(m.maps.iter().any(|e| e.usage == "height"));
         assert!(!source.is_empty());
         assert_eq!(std::fs::read_dir(inside.join("out")).unwrap().count(), 1, "no temporary files left behind");
         // An explicit extension is kept (case-insensitively) and the file can be opened again.
@@ -369,6 +360,7 @@ mod tests {
                 })
                 .collect::<Vec<_>>()
         };
+
         let denied = talk(&[r#"{"id":1,"method":"session.inspect"}"#]);
         assert_eq!(denied[0]["ok"], false);
         let ok = talk(&[r#"{"id":1,"method":"auth","params":{"token":"0123456789abcdef0123"}}"#, r#"{"id":2,"method":"ping"}"#]);
