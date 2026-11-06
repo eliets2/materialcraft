@@ -56,8 +56,7 @@ pub fn clamp_params(def: &NodeDefinition, params: &mut BTreeMap<String, Value>) 
             };
             match bounds {
                 Some((lo, hi)) if lo <= hi => *i = (*i).clamp(lo, hi),
-                Some(_) => *i = fallback,
-                None => *i = fallback,
+                _ => *i = fallback,
             }
             continue;
         }
@@ -67,8 +66,9 @@ pub fn clamp_params(def: &NodeDefinition, params: &mut BTreeMap<String, Value>) 
             }
             continue;
         }
-        if !p.min.is_finite() || !p.max.is_finite() || p.min > p.max {
-            // No usable range: fall back to the parameter default.
+        if p.min.is_nan() || p.max.is_nan() || p.min > p.max {
+            // No usable range: fall back to the parameter default. Infinite
+            // bounds are usable: they make the range unbounded (below).
             match (&mut *v, &p.default) {
                 (Value::Float(x), Value::Float(d)) => *x = *d,
                 (Value::Float2(a), Value::Float2(d)) => *a = *d,
@@ -81,7 +81,12 @@ pub fn clamp_params(def: &NodeDefinition, params: &mut BTreeMap<String, Value>) 
             continue;
         }
         let span = p.max - p.min;
-        let (lo, hi) = (p.min - HARD_SPAN * span, p.max + HARD_SPAN * span);
+        let (lo, hi) = if span.is_finite() {
+            (p.min - HARD_SPAN * span, p.max + HARD_SPAN * span)
+        } else {
+            // An infinite bound leaves no finite span to widen: unbounded.
+            (f32::NEG_INFINITY, f32::INFINITY)
+        };
         // The default's component `i`, or 0 when the default is a different variant.
         let fallback = |i: usize| match &p.default {
             Value::Float(d) => [*d].get(i).copied(),

@@ -60,21 +60,65 @@ fn manual_values_beyond_slider_and_multiple_angle_turns_survive() {
 #[test]
 fn clamp_params_bounds_enum_without_options() {
     let mut def = find("splatter").unwrap().clone();
-    if let Some(p) = def.params.iter_mut().find(|p| p.id == "pattern") {
-        p.options = &[];
-        p.default = Value::Enum(0);
-        p.min = 0.0;
-        p.max = 0.0;
-    }
-    if let Some(p) = def.params.iter_mut().find(|p| p.id == "size") {
-        p.default = Value::Float(5.0);
-        p.min = 5.0;
-        p.max = 5.0;
-    }
+    let p = def.params.iter_mut().find(|p| p.id == "pattern").expect("pattern param");
+    p.options = &[];
+    p.default = Value::Enum(0);
+    p.min = 0.0;
+    p.max = 0.0;
     let mut p = BTreeMap::new();
     p.insert("pattern".into(), Value::Enum(999));
-    p.insert("size".into(), Value::Float(1e9));
     clamp_params(&def, &mut p);
     assert_eq!(p["pattern"], Value::Enum(0));
+}
+
+#[test]
+fn clamp_params_degenerate_range_clamps_to_min() {
+    let mut def = find("splatter").unwrap().clone();
+    let p = def.params.iter_mut().find(|p| p.id == "size").expect("size param");
+    p.default = Value::Float(5.0);
+    p.min = 5.0;
+    p.max = 5.0;
+    let mut p = BTreeMap::new();
+    p.insert("size".into(), Value::Float(1e9));
+    clamp_params(&def, &mut p);
     assert_eq!(p["size"], Value::Float(5.0));
+}
+
+#[test]
+fn clamp_params_inverted_range_falls_back_to_default() {
+    let mut def = find("splatter").unwrap().clone();
+    let p = def.params.iter_mut().find(|p| p.id == "size").expect("size param");
+    p.default = Value::Float(5.0);
+    p.min = 10.0;
+    p.max = 0.0;
+    let mut p = BTreeMap::new();
+    p.insert("size".into(), Value::Float(1e9));
+    clamp_params(&def, &mut p);
+    assert_eq!(p["size"], Value::Float(5.0));
+}
+
+#[test]
+fn clamp_params_nan_range_falls_back_to_default() {
+    let mut def = find("splatter").unwrap().clone();
+    let p = def.params.iter_mut().find(|p| p.id == "size").expect("size param");
+    p.default = Value::Float(5.0);
+    p.min = f32::NAN;
+    p.max = 1.0;
+    let mut p = BTreeMap::new();
+    p.insert("size".into(), Value::Float(1e9));
+    clamp_params(&def, &mut p);
+    assert_eq!(p["size"], Value::Float(5.0));
+}
+
+#[test]
+fn clamp_params_non_finite_range_is_unbounded() {
+    let mut def = find("splatter").unwrap().clone();
+    let p = def.params.iter_mut().find(|p| p.id == "size").expect("size param");
+    p.default = Value::Float(5.0);
+    p.min = f32::NEG_INFINITY;
+    p.max = f32::INFINITY;
+    let mut p = BTreeMap::new();
+    p.insert("size".into(), Value::Float(1e9));
+    clamp_params(&def, &mut p);
+    assert_eq!(p["size"], Value::Float(1e9));
 }
