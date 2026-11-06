@@ -295,9 +295,9 @@ pub fn cook(pkg: &Package, gi: usize, opts: &Options, cache: &Mutex<Cache>) -> C
     let t0 = now_ms();
     let mut out = Cooked::default();
     let Some(graph) = pkg.graphs.get(gi) else { return out };
-    // The top-level graph's input nodes show their preview images; the caller's images win.
+    // Input nodes show their bound preview images; the caller's images win.
     let bound;
-    let opts = if opts.depth == 0 && !graph.input_images.is_empty() {
+    let opts = if !graph.input_images.is_empty() {
         let mut inputs: BTreeMap<String, Image> = graph
             .input_images
             .iter()
@@ -353,8 +353,10 @@ fn graph_tree_hash(pkg: &Package, gi: usize) -> u64 {
         let Some(graph) = pkg.graphs.get(index) else { continue };
         index.hash(&mut h);
         serde_json::to_string(graph).unwrap_or_default().hash(&mut h);
-        for res in graph.input_images.values() {
+        for (id, res) in &graph.input_images {
             pkg.resource(res).map(|r| r.bytes.content_hash()).hash(&mut h);
+            id.hash(&mut h);
+            graph.input_images_linear.contains(id).hash(&mut h);
         }
         for n in &graph.nodes {
             if let Some(Value::Text(name)) = n.params.get("resource") {
@@ -1026,9 +1028,45 @@ mod tests {
         let first = cook(&p, 0, &opts, &cache);
         assert!(first.nodes[&inst].error.is_none(), "{:?}", first.nodes[&inst].error);
         assert!(!first.nodes[&inst].cached);
+        let unchanged = cook(&p, 0, &opts, &cache);
+        assert!(unchanged.nodes[&inst].cached, "an unchanged instance should be served from the cache");
         p.resources[0].bytes = ResourceBytes::new(vec![2; 100]);
         shade.store(2, Ordering::Relaxed);
         let second = cook(&p, 0, &opts, &cache);
         assert!(!second.nodes[&inst].cached, "changing the bound input image resource must recook the instance");
+    }
+
+    #[test]
+    fn bound_input_image_linear_flag_change_recooks_instance() {
+        use materialcraft_core::{Resource, ResourceBytes};
+        let mut sub = Graph::new("sub");
+        sub.size = [4, 4];
+        let i = sub.add_node("input_grayscale", [0.0, 0.0]);
+        sub.node_mut(i).unwrap().params.insert("identifier".into(), Value::Text("in".into()));
+        let o = sub.add_node("output", [100.0, 0.0]);
+        sub.connect(i, "output", o, "input").unwrap();
+        sub.input_images.insert("in".into(), "curv".into());
+        let (top, inst) = instancing("top", "sub");
+        let mut p = Package::new("p");
+        p.graphs = vec![top, sub];
+        p.resources.push(Resource::new("curv", "curv.bin", ResourceBytes::new(vec![1; 100])));
+        let res = |k: &str| {
+            let (name, linear) = materialcraft_image::split_resource_key(k);
+            (name == "curv").then(|| Image::filled(4, 4, Kind::Gray, [if linear { 0.5 } else { 0.2 }; 4]))
+        };
+        let cache = Mutex::new(Cache::default());
+        let opts = Options::new(&res);
+        let first = cook(&p, 0, &opts, &cache);
+        assert!(first.nodes[&inst].error.is_none(), "{:?}", first.nodes[&inst].error);
+        assert!(!first.nodes[&inst].cached);
+        let first_value = first.image(inst, 0).unwrap().data[0];
+        assert!((first_value - 0.2).abs() < 1e-4, "sRGB bound image should reach the instance, got {first_value}");
+        let second = cook(&p, 0, &opts, &cache);
+        assert!(second.nodes[&inst].cached, "an unchanged instance should be served from the cache");
+        p.graphs[1].input_images_linear.insert("in".into());
+        let third = cook(&p, 0, &opts, &cache);
+        assert!(!third.nodes[&inst].cached, "toggling input_images_linear must recook the instance");
+        let third_value = third.image(inst, 0).unwrap().data[0];
+        assert!((third_value - 0.5).abs() < 1e-4, "linear bound image should reach the instance, got {third_value}");
     }
 }
