@@ -52,6 +52,11 @@ pub(crate) fn graph_tree_hash(pkg: &Package, gi: usize) -> u64 {
 
         index.hash(&mut h);
         serde_json::to_string(graph).unwrap_or_default().hash(&mut h);
+        for (id, res) in &graph.input_images {
+            pkg.resource(res).map(|r| r.bytes.content_hash()).hash(&mut h);
+            id.hash(&mut h);
+            graph.input_images_linear.contains(id).hash(&mut h);
+        }
         for n in &graph.nodes {
             if let Some(Value::Text(name)) = n.params.get("resource") {
                 pkg.resource(name).map(|r| r.bytes.content_hash()).hash(&mut h);

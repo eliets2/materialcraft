@@ -12,9 +12,9 @@ pub fn cook(package: &Package, graph_index: usize, options: &Options, cache: &Mu
     let mut cooked = Cooked::default();
     let Some(graph) = package.graphs.get(graph_index) else { return cooked };
 
-    // The top-level graph's input nodes show their preview images; the caller's images win
+    // Input nodes show their bound preview images; the caller's images win
     let bound;
-    let options = if options.depth == 0 && !graph.input_images.is_empty() {
+    let options = if !graph.input_images.is_empty() {
         let mut inputs: BTreeMap<String, Image> = graph
             .input_images
             .iter()

@@ -14,9 +14,12 @@ pub fn clamp_params(def: &NodeDefinition, params: &mut BTreeMap<String, Value>) 
     for p in &def.params {
         let Some(v) = params.get_mut(p.id) else { continue };
         if let Value::Enum(i) = v {
-            if !p.options.is_empty() {
-                *i = (*i).min(u32::try_from(p.options.len() - 1).unwrap_or(u32::MAX));
-            }
+            // (an enum without options has nothing to choose from: its default stands)
+            *i = match (p.options.len().checked_sub(1), &p.default) {
+                (Some(last), _) => (*i).min(u32::try_from(last).unwrap_or(u32::MAX)),
+                (None, Value::Enum(d)) => *d,
+                (None, _) => 0,
+            };
             continue;
         }
         if let Value::Color(c) = v {
@@ -25,11 +28,11 @@ pub fn clamp_params(def: &NodeDefinition, params: &mut BTreeMap<String, Value>) 
             }
             continue;
         }
-        if p.min >= p.max {
-            continue;
-        }
+        // No range declared (an Input Value's default takes any number): only a value that isn't
+        // a number goes
+        let ranged = p.min < p.max;
         let span = p.max - p.min;
-        let (lo, hi) = (p.min - HARD_SPAN * span, p.max + HARD_SPAN * span);
+        let (lo, hi) = if ranged { (p.min - HARD_SPAN * span, p.max + HARD_SPAN * span) } else { (f32::MIN, f32::MAX) };
         // The default's component `i`, or 0 when the default is a different variant
         let fallback = |i: usize| match &p.default {
             Value::Float(d) => [*d].get(i).copied(),
@@ -46,8 +49,8 @@ pub fn clamp_params(def: &NodeDefinition, params: &mut BTreeMap<String, Value>) 
             Value::Float2(a) => a.iter_mut().enumerate().for_each(|(i, x)| clamp_at(x, i)),
             Value::Float3(a) => a.iter_mut().enumerate().for_each(|(i, x)| clamp_at(x, i)),
             Value::Float4(a) => a.iter_mut().enumerate().for_each(|(i, x)| clamp_at(x, i)),
-            Value::Int(x) => clamp_int(x),
-            Value::Int2(a) => a.iter_mut().for_each(clamp_int),
+            Value::Int(x) if ranged => clamp_int(x),
+            Value::Int2(a) if ranged => a.iter_mut().for_each(clamp_int),
             _ => {}
         }
     }

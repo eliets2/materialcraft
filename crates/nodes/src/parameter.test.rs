@@ -34,6 +34,32 @@ fn clamp_params_covers_values_set_after_resolution() {
 }
 
 #[test]
+fn clamp_params_bounds_an_enum_without_options() {
+    let mut def = find("blend").unwrap().clone();
+    let enums = def.params.iter_mut().find(|p| matches!(p.default, Value::Enum(_))).expect("an enum parameter");
+    enums.options = &[];
+    enums.default = Value::Enum(1);
+    let id = enums.id;
+    let mut p = BTreeMap::from([(id.to_string(), Value::Enum(999))]);
+    clamp_params(&def, &mut p);
+    assert_eq!(p[id], Value::Enum(1));
+}
+
+/// A parameter with no declared range keeps any number, and only a value that isn't a number goes.
+#[test]
+fn clamp_params_keeps_numbers_without_a_declared_range() {
+    let def = find("input_value").unwrap();
+    let default = def.params.iter().find(|p| p.id == "default").unwrap();
+    assert!(default.min >= default.max, "input_value's default declares no range");
+    let mut p = over("default", Value::Float(3.5));
+    clamp_params(def, &mut p);
+    assert_eq!(p["default"], Value::Float(3.5));
+    let mut p = over("default", Value::Float(f32::NAN));
+    clamp_params(def, &mut p);
+    assert_eq!(p["default"], default.default);
+}
+
+#[test]
 fn defaults_lie_inside_their_hard_limits() {
     for def in catalog() {
         let p = resolve_params(def, &BTreeMap::new());

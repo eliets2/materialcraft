@@ -158,11 +158,19 @@ fn serve_connection(h: &Mutex<Headless>, stream: std::net::TcpStream, token: &st
     let mut authed = false;
     let mut deadline = Some(AuthDeadline::start(&w, AUTH_TIMEOUT)?);
     loop {
-        match read_bounded_line(&mut r, &mut line)? {
-            LineRead::Eof => return Ok(()),
-            LineRead::TooLong => return write_reply(&mut w, &json!({"id": null, "ok": false, "error": "request too large"})),
-            LineRead::Line if line.trim().is_empty() => continue,
-            LineRead::Line => {}
+        match read_bounded_line(&mut r, &mut line) {
+            Ok(LineRead::Eof) => return Ok(()),
+            Ok(LineRead::TooLong) => return write_reply(&mut w, &json!({"id": null, "ok": false, "error": "request too large"})),
+            Ok(LineRead::Line) if line.trim().is_empty() => continue,
+            Ok(LineRead::Line) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::InvalidData => {
+                write_reply(&mut w, &json!({"id": null, "ok": false, "error": "request is not UTF-8"}))?;
+                if !authed {
+                    return Ok(());
+                }
+                continue;
+            }
+            Err(e) => return Err(e),
         }
         if authed {
             write_reply(&mut w, &respond(h, &line))?;

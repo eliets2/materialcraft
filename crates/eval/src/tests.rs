@@ -364,3 +364,68 @@ fn linear_input_images_and_bitmap_nodes_request_data_reads() {
     p.graphs[0].node_mut(b).unwrap().params.insert("colour_space".into(), Value::Enum(1));
     assert_eq!(first(&p), (0.5, 0.5));
 }
+
+#[test]
+fn bound_input_image_resource_change_recooks_instance() {
+    use materialcraft_core::{Resource, ResourceBytes};
+    use std::sync::atomic::AtomicU8;
+    let mut sub = Graph::new("sub");
+    sub.size = [4, 4];
+    let i = sub.add_node("input_grayscale", [0.0, 0.0]);
+    sub.node_mut(i).unwrap().params.insert("identifier".into(), Value::Text("in".into()));
+    let o = sub.add_node("output", [100.0, 0.0]);
+    sub.connect(i, "output", o, "input").unwrap();
+    sub.input_images.insert("in".into(), "curv".into());
+    let (top, inst) = instancing("top", "sub");
+    let mut p = Package::new("p");
+    p.graphs = vec![top, sub];
+    p.resources.push(Resource::new("curv", "curv.bin", ResourceBytes::new(vec![1; 100])));
+    // Stands in for decoding: the first byte picks the shade.
+    let shade = AtomicU8::new(1);
+    let res = |_: &str| Some(Image::filled(4, 4, Kind::Gray, [f32::from(shade.load(Ordering::Relaxed)) / 10.0; 4]));
+    let cache = Mutex::new(Cache::default());
+    let opts = Options::new(&res);
+    let first = cook(&p, 0, &opts, &cache);
+    assert!(first.nodes[&inst].error.is_none(), "{:?}", first.nodes[&inst].error);
+    assert!(!first.nodes[&inst].cached);
+    let unchanged = cook(&p, 0, &opts, &cache);
+    assert!(unchanged.nodes[&inst].cached, "an unchanged instance should be served from the cache");
+    p.resources[0].bytes = ResourceBytes::new(vec![2; 100]);
+    shade.store(2, Ordering::Relaxed);
+    let second = cook(&p, 0, &opts, &cache);
+    assert!(!second.nodes[&inst].cached, "changing the bound input image resource must recook the instance");
+}
+
+#[test]
+fn bound_input_image_linear_flag_change_recooks_instance() {
+    use materialcraft_core::{Resource, ResourceBytes};
+    let mut sub = Graph::new("sub");
+    sub.size = [4, 4];
+    let i = sub.add_node("input_grayscale", [0.0, 0.0]);
+    sub.node_mut(i).unwrap().params.insert("identifier".into(), Value::Text("in".into()));
+    let o = sub.add_node("output", [100.0, 0.0]);
+    sub.connect(i, "output", o, "input").unwrap();
+    sub.input_images.insert("in".into(), "curv".into());
+    let (top, inst) = instancing("top", "sub");
+    let mut p = Package::new("p");
+    p.graphs = vec![top, sub];
+    p.resources.push(Resource::new("curv", "curv.bin", ResourceBytes::new(vec![1; 100])));
+    let res = |k: &str| {
+        let (name, linear) = materialcraft_image::split_resource_key(k);
+        (name == "curv").then(|| Image::filled(4, 4, Kind::Gray, [if linear { 0.5 } else { 0.2 }; 4]))
+    };
+    let cache = Mutex::new(Cache::default());
+    let opts = Options::new(&res);
+    let first = cook(&p, 0, &opts, &cache);
+    assert!(first.nodes[&inst].error.is_none(), "{:?}", first.nodes[&inst].error);
+    assert!(!first.nodes[&inst].cached);
+    let first_value = first.image(inst, 0).unwrap().data[0];
+    assert!((first_value - 0.2).abs() < 1e-4, "sRGB bound image should reach the instance, got {first_value}");
+    let second = cook(&p, 0, &opts, &cache);
+    assert!(second.nodes[&inst].cached, "an unchanged instance should be served from the cache");
+    p.graphs[1].input_images_linear.insert("in".into());
+    let third = cook(&p, 0, &opts, &cache);
+    assert!(!third.nodes[&inst].cached, "toggling input_images_linear must recook the instance");
+    let third_value = third.image(inst, 0).unwrap().data[0];
+    assert!((third_value - 0.5).abs() < 1e-4, "linear bound image should reach the instance, got {third_value}");
+}
