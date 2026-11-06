@@ -346,6 +346,8 @@ mod tests {
         assert!(e.contains("disabled for automation"), "{e}");
     }
 
+    const VALID_PNG: &[u8] = &[137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1, 8, 6, 0, 0, 0, 31, 21, 196, 137, 0, 0, 0, 13, 73, 68, 65, 84, 120, 156, 99, 0, 1, 0, 0, 5, 0, 1, 13, 10, 45, 180, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130];
+
     #[test]
     fn render_displacement_applies_without_hq() {
         let h = session();
@@ -357,13 +359,32 @@ mod tests {
     #[test]
     fn material_export_rejects_inputs_outside_workspace() {
         let (inside, outside, h) = workspace_session("mat-inputs-escape", true);
-        std::fs::write(outside.join("secret.png"), b"not a png").unwrap();
+        std::fs::write(outside.join("secret.png"), VALID_PNG).unwrap();
+        #[cfg(unix)]
+        std::fs::write("/tmp/secret.png", VALID_PNG).unwrap();
+        std::fs::write(inside.join("a\\b.png"), VALID_PNG).unwrap();
         let abs = outside.join("secret.png").display().to_string();
         for p in ["../outside/secret.png", "a/../../outside/secret.png", "/tmp/secret.png", "a\\b.png", abs.as_str()] {
-            let e = call(&h, "material.export", json!({"path": "m.mcmat", "size": 16, "inputs": {"curvature": p}}));
-            assert!(e.is_err(), "accepted input {p:?}");
+            let e = call(&h, "material.export", json!({"path": "m.mcmat", "size": 16, "inputs": {"curvature": p}})).unwrap_err();
+            assert!(
+                e.contains(p) || e.contains("outside") || e.contains("workspace") || e.contains("not granted") || e.contains("escape") || e.contains("root"),
+                "error for input {p:?} should name the path/workspace (workspace rejection, not decode failure), got: {e}"
+            );
         }
-        assert_eq!(std::fs::read_dir(&inside).unwrap().count(), 0, "failed exports leave nothing behind");
+        assert_eq!(std::fs::read_dir(&inside).unwrap().count(), 1, "failed exports leave nothing behind");
+    }
+
+    #[test]
+    fn material_export_with_in_workspace_input_succeeds() {
+        let (inside, _, h) = workspace_session("mat-input-ok", true);
+        std::fs::write(inside.join("curv.png"), VALID_PNG).unwrap();
+        let _ = call(&h, "command.run", json!({"id": "graph.node.add", "params": {"def": "input_grayscale", "params": {"identifier": "curvature"}}}));
+        let r = call(&h, "material.export", json!({"path": "m.mcmat", "size": 16, "inputs": {"curvature": "curv.png"}})).expect("in-workspace input should export");
+        assert_eq!(r["path"], "m.mcmat");
+        let bytes = std::fs::read(inside.join("m.mcmat")).unwrap();
+        assert_eq!(r["bytes"], bytes.len());
+        let (m, _) = materialcraft_engine::formats::material::read_material(&bytes).unwrap();
+        assert!(m.inputs.iter().any(|i| i.identifier == "curvature"), "produced material should contain the input, got: {:?}", m.inputs);
     }
     }
 

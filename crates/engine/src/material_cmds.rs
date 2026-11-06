@@ -155,9 +155,14 @@ pub fn material_request(s: &Session, cmd: &str, p: &J) -> Result<(usize, Materia
 
 #[cfg(not(target_arch = "wasm32"))]
 pub fn load_inputs(read: impl Fn(&str) -> std::result::Result<Vec<u8>, String>, p: &J, inputs: &mut BTreeMap<String, Image>) -> Result<()> {
+    load_inputs_cmd("material.export", read, p, inputs)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn load_inputs_cmd(cmd: &str, read: impl Fn(&str) -> std::result::Result<Vec<u8>, String>, p: &J, inputs: &mut BTreeMap<String, Image>) -> Result<()> {
     for (id, file) in p.get("inputs").and_then(J::as_object).into_iter().flatten() {
-        let file = file.as_str().ok_or_else(|| bad("material.export", format!("inputs.{id} must be an image path")))?;
-        let bytes = read(file).map_err(|e| bad("material.export", e))?;
+        let file = file.as_str().ok_or_else(|| bad(cmd, format!("inputs.{id} must be an image path")))?;
+        let bytes = read(file).map_err(|e| bad(cmd, e))?;
         inputs.insert(id.clone(), materialcraft_formats::decode(&bytes, false)?);
     }
     Ok(())
@@ -366,5 +371,17 @@ mod tests {
             let decoded = decode(map, true).unwrap();
             assert!((decoded.get(0, 0, false)[0] - 128.0 / 255.0).abs() < 1e-3, "data inputs must be decoded as linear");
         }
+    }
+
+    #[test]
+    fn load_inputs_uses_calling_command_name() {
+        let mut inputs = BTreeMap::new();
+        let err = load_inputs_cmd("file.exportMaterial", |_| Err("unused".to_string()), &json!({"inputs": {"curvature": 123}}), &mut inputs).unwrap_err();
+        assert!(err.to_string().contains("file.exportMaterial"), "error should name the calling command, got: {err}");
+        let err = load_inputs_cmd("material.export", |_| Err("unused".to_string()), &json!({"inputs": {"curvature": 123}}), &mut inputs).unwrap_err();
+        assert!(err.to_string().contains("material.export"), "error should name the calling command, got: {err}");
+        let err = load_inputs(|_| Err("unused".to_string()), &json!({"inputs": {"curvature": 123}}), &mut inputs).unwrap_err();
+        assert!(err.to_string().contains("material.export"), "headless caller should be reported as material.export, got: {err}");
+    }
     }
 }
