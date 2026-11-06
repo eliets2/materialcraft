@@ -13,38 +13,66 @@ pub fn gaussian(img: &Image, sigma: f32, tile: bool) -> Image {
         return img.clone();
     }
     let sigma = sigma.min(img.w.max(img.h) as f32);
+    // Bound each axis by its own dimension: a shared radius based on the
+    // longer side can far exceed the shorter side and let edge samples dominate.
+    let sigma_x = sigma.min(img.w as f32);
+    let sigma_y = sigma.min(img.h as f32);
     if sigma < 3.0 {
-        let r = (sigma * 3.0).ceil() as i64;
-        let k: Vec<f32> = (-r..=r).map(|i| (-(i * i) as f32 / (2.0 * sigma * sigma)).exp()).collect();
-        let s: f32 = k.iter().sum();
-        let k: Vec<f32> = k.iter().map(|v| v / s).collect();
-        let pass = |src: &Image, horizontal: bool| convolve_1d(src, &k, r, horizontal, tile);
-        return pass(&pass(img, true), false);
+        let kernel = |s: f32| {
+            let r = (s * 3.0).ceil() as i64;
+            let k: Vec<f32> = (-r..=r).map(|i| (-(i * i) as f32 / (2.0 * s * s)).exp()).collect();
+            let sum: f32 = k.iter().sum();
+            (k.iter().map(|v| v / sum).collect::<Vec<f32>>(), r)
+        };
+        let (kx, rx) = kernel(sigma_x);
+        let (ky, ry) = kernel(sigma_y);
+        let mid = convolve_1d(img, &kx, rx, true, tile);
+        return convolve_1d(&mid, &ky, ry, false, tile);
     }
     // Box widths for three passes (Kovesi, "Fast almost-Gaussian filtering").
-    let n = 3.0f32;
-    let wl = ((12.0 * sigma * sigma / n + 1.0).sqrt()).floor() as i64;
-    let wl = if wl % 2 == 0 { wl - 1 } else { wl };
-    let wu = wl + 2;
-    let m = ((12.0 * sigma * sigma - n * (wl * wl) as f32 - 4.0 * n * wl as f32 - 3.0 * n) / (-4.0 * wl as f32 - 4.0)).round() as i64;
+    let radii = |s: f32| {
+        let n = 3.0f32;
+        let wl = ((12.0 * s * s / n + 1.0).sqrt()).floor() as i64;
+        let wl = if wl % 2 == 0 { wl - 1 } else { wl };
+        let wu = wl + 2;
+        let m = ((12.0 * s * s - n * (wl * wl) as f32 - 4.0 * n * wl as f32 - 3.0 * n) / (-4.0 * wl as f32 - 4.0)).round() as i64;
+        [0, 1, 2].map(|i| ((if i < m { wl } else { wu }) - 1) / 2)
+    };
+    let radii_x = radii(sigma_x);
+    let radii_y = radii(sigma_y);
     let mut out = img.clone();
     for i in 0..3 {
-        let r = (if i < m { wl } else { wu } - 1) / 2;
-        out = box_1d(&box_1d(&out, r.max(0), true, tile), r.max(0), false, tile);
+        out = box_1d(&out, radii_x[i].max(0), true, tile);
+        out = box_1d(&out, radii_y[i].max(0), false, tile);
     }
     out
 }
 
+/// Border handling: out-of-range taps are skipped and the accumulator is divided by the sum
+/// of in-range kernel weights (`wsum`), so edge pixels are averaged over in-range taps only.
+/// This changes small-sigma (sigma < 3) gaussian border output compared with a clamped-tap
+/// sum; constant images stay constant at the border.
 fn convolve_1d(src: &Image, k: &[f32], r: i64, horizontal: bool, tile: bool) -> Image {
     let c = src.channels();
     Image::generate(src.w, src.h, src.kind, |x, y| {
         let mut acc = [0.0f32; 4];
+        let mut wsum = 0.0f32;
         for (i, kv) in k.iter().enumerate() {
             let o = i as i64 - r;
-            let p = if horizontal { src.get(x as i64 + o, y as i64, tile) } else { src.get(x as i64, y as i64 + o, tile) };
+            let pos = if horizontal { x as i64 + o } else { y as i64 + o };
+            let n = if horizontal { src.w } else { src.h } as i64;
+            if pos < 0 || pos >= n {
+                continue;
+            }
+            let p = if horizontal { src.get(pos, y as i64, tile) } else { src.get(x as i64, pos, tile) };
             for ch in 0..c.clamp(1, 4) {
                 acc[ch] += p[ch] * kv;
             }
+            wsum += kv;
+        }
+        let inv = if wsum > 0.0 { 1.0 / wsum } else { 0.0 };
+        for ch in 0..c.clamp(1, 4) {
+            acc[ch] *= inv;
         }
         if c == 1 { [acc[0], 0.0, 0.0, 0.0] } else { acc }
     })
@@ -58,8 +86,35 @@ fn box_1d(src: &Image, r: i64, horizontal: bool, tile: bool) -> Image {
     let (w, h) = (src.w as usize, src.h as usize);
     let c = src.channels();
     let inv = 1.0 / (2 * r + 1) as f32;
-    let mut data = vec![0.0f32; w * h * c];
     let line_len = if horizontal { w } else { h };
+    // A window spanning the whole line gives the line mean at every position.
+    if 2 * r + 1 >= line_len as i64 {
+        let cc = c.clamp(1, 4);
+        let lines = if horizontal { h } else { w };
+        let inv_line = if line_len > 0 { 1.0 / line_len as f32 } else { 0.0 };
+        let mut means = vec![0.0f32; lines * cc];
+        for line in 0..lines {
+            let mut acc = [0.0f32; 4];
+            for i in 0..line_len {
+                let (px, py) = if horizontal { (i, line) } else { (line, i) };
+                for ch in 0..cc {
+                    acc[ch] += src.data.get((py * w + px) * c + ch).copied().unwrap_or(0.0);
+                }
+            }
+            for ch in 0..cc {
+                means[line * cc + ch] = acc[ch] * inv_line;
+            }
+        }
+        return Image::generate(src.w, src.h, src.kind, |x, y| {
+            let line = if horizontal { y as usize } else { x as usize };
+            let mut acc = [0.0f32; 4];
+            for ch in 0..cc {
+                acc[ch] = means.get(line * cc + ch).copied().unwrap_or(0.0);
+            }
+            if c == 1 { [acc[0], 0.0, 0.0, 0.0] } else { acc }
+        });
+    }
+    let mut data = vec![0.0f32; w * h * c];
     let lines = if horizontal { h } else { w };
     let get = |line: usize, i: i64, ch: usize| -> f32 {
         let n = line_len as i64;
@@ -364,6 +419,17 @@ mod tests {
     }
 
     #[test]
+    fn gaussian_huge_sigma_keeps_row_mean_on_narrow_image() {
+        let img = Image::gray(8, 32, |x, _y| if x == 0 { 1.0 } else { 0.0 });
+        let b = gaussian(&img, 1000.0, false);
+        for y in 0..32i64 {
+            for x in 0..8i64 {
+                assert!((b.get(x, y, false)[0] - 0.125).abs() < 0.05, "pixel {x},{y}");
+            }
+        }
+    }
+
+    #[test]
     fn edt_exact() {
         let d = distance_sq(9, 1, |i| i == 4, false);
         assert_eq!(d, vec![16.0, 9.0, 4.0, 1.0, 0.0, 1.0, 4.0, 9.0, 16.0]);
@@ -423,6 +489,41 @@ mod tests {
         let r = hsl_to_rgb(h[0], h[1], h[2]);
         for k in 0..3 {
             assert!((r[k] - c[k]).abs() < 1e-5);
+        }
+    }
+
+    #[test]
+    fn gaussian_tiled_matches_untiled_for_oversized_radius() {
+        let img = Image::gray(4, 5, |x, y| ((x * 3 + y * 5) % 7) as f32 / 6.0);
+        for sigma in [2.0f32, 20.0] {
+            let tiled = gaussian(&img, sigma, true);
+            let untiled = gaussian(&img, sigma, false);
+            for y in 0..img.h as i64 {
+                for x in 0..img.w as i64 {
+                    let diff = (tiled.get(x, y, true)[0] - untiled.get(x, y, false)[0]).abs();
+                    assert!(diff < 1e-4, "sigma {sigma} pixel {x},{y} diff {diff}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn small_sigma_convolve_preserves_mean_on_narrow_image() {
+        // Impulse far enough from the edges that every affected tap is in range, so the
+        // renormalised convolve_1d passes must preserve the total (row/column) mean.
+        let img = Image::gray(10, 12, |x, y| if x == 5 && y == 6 { 1.0 } else { 0.0 });
+        let b = gaussian(&img, 0.6, false);
+        assert!((b.mean()[0] - img.mean()[0]).abs() < 1e-5, "mean {} vs {}", b.mean()[0], img.mean()[0]);
+        let row_sum: f32 = (0..10i64).map(|x| b.get(x, 6, false)[0]).sum();
+        let col_sum: f32 = (0..12i64).map(|y| b.get(5, y, false)[0]).sum();
+        assert!(row_sum > 0.0 && row_sum < 1.0, "row sum {row_sum}");
+        assert!(col_sum > 0.0 && col_sum < 1.0, "col sum {col_sum}");
+        // Edge renormalisation: a constant narrow image stays constant at the border.
+        let flat = gaussian(&Image::filled(6, 9, Kind::Gray, [0.5, 0.0, 0.0, 0.0]), 1.0, false);
+        for y in 0..9i64 {
+            for x in 0..6i64 {
+                assert!((flat.get(x, y, false)[0] - 0.5).abs() < 1e-5, "pixel {x},{y}");
+            }
         }
     }
 }
