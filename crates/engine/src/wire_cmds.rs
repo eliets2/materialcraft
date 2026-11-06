@@ -115,7 +115,7 @@ fn insert_dot(s: &mut Session, p: &J) -> Result<J> {
         }
     };
     // Hostile but finite coordinates stay within a sane canvas.
-    let at = at.map(|v| v.clamp(-1e7, 1e7));
+    let at = crate::graph_grid::snap_position(at, crate::commands::boolp(p, "snapToGrid").unwrap_or(false));
     s.edit("Insert reroute dot", |s| {
         let id = s.graph_mut()?.add_node("dot", at);
         let input = s.input_ports(id).into_iter().next().ok_or_else(|| bad(ID, "the dot has no input"))?;

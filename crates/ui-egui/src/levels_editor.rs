@@ -1,12 +1,3 @@
-//! The Levels node's editor in the properties panel: a histogram of the node's input with the
-//! levels transfer curve over it, the input range handles (low, mid, high) under it and the
-//! output range handles (low, high) under a black-to-white bar.
-//!
-//! The mid handle sits where `Level in mid` really acts: relative to the input range, so it moves
-//! with the low and high handles. The input low and high handles cannot cross (the low one stays
-//! left of the high one); the output handles may, which inverts the result. Every drag is a
-//! `graph.node.param` command, merged into one undo step per handle.
-
 use egui::{Color32, Pos2, Rect, Sense, Shape, Stroke, StrokeKind, Ui, pos2, vec2};
 use materialcraft_engine::core::{Node, NodeId, Value};
 use materialcraft_engine::image::{Image, Kind};
@@ -17,13 +8,13 @@ use crate::MaterialCraftApp;
 use crate::i18n::tr;
 use crate::theme::Tokens;
 
-/// Histogram bins (one per 8-bit level).
+/// Histogram bins (one per 8-bit level)
 pub const BINS: usize = 256;
 
-/// Smallest gap kept between the input low and high handles.
+/// Smallest gap kept between the input low and high handles
 const MIN_SPAN: f32 = 0.004;
 
-/// Histograms of an image's values in 0..1, clamped: one for a gray image, else R, G and B.
+/// Histograms of an image's values in 0..1, clamped: one for a gray image, else R, G and B
 pub fn histogram(img: &Image) -> Vec<[u32; BINS]> {
     let channels = if img.kind == Kind::Gray { 1 } else { 3 };
     let stride = img.kind.channels();
@@ -40,30 +31,25 @@ pub fn histogram(img: &Image) -> Vec<[u32; BINS]> {
     h
 }
 
-/// The bar height scale: the tallest bin away from pure black and white (masks pile up there and
-/// would flatten everything else), at least one.
+/// The bar height scale: the tallest bin away from pure black and white (masks pile up there and would flatten everything else), at least one
 fn scale(h: &[[u32; BINS]]) -> f32 {
     let inner = h.iter().flat_map(|b| b.get(1..BINS - 1).unwrap_or(&[]).iter().copied()).max().unwrap_or(0);
     let all = h.iter().flat_map(|b| b.iter().copied()).max().unwrap_or(0);
     (if inner > 0 { inner } else { all }).max(1) as f32
 }
 
-/// The five levels values of `n`: in low, in mid (relative), in high, out low, out high.
+/// The five levels values of `n`: in low, in mid (relative), in high, out low, out high
 pub fn values(n: &Node) -> [f32; 5] {
-    let get = |id: &str, d: f32| match n.params.get(id) {
-        Some(Value::Float(v)) if v.is_finite() => *v,
-        _ => d,
-    };
+    let get = |id: &str, default: f32| n.params.get(id).and_then(Value::as_f32).filter(|value| value.is_finite()).unwrap_or(default);
     [get("in_low", 0.0), get("in_mid", 0.5), get("in_high", 1.0), get("out_low", 0.0), get("out_high", 1.0)]
 }
 
-/// Where the mid handle sits on the 0..1 axis.
+/// Where the mid handle sits on the 0..1 axis
 pub fn mid_position(v: &[f32; 5]) -> f32 {
     v[0] + v[1].clamp(0.0, 1.0) * (v[2] - v[0])
 }
 
-/// The new value of handle `k` (0 in low, 1 in mid, 2 in high, 3 out low, 4 out high) dragged to
-/// `x` on the 0..1 axis: input low and high cannot cross, mid is stored relative to the range.
+/// The new value of handle `k` (0 in low, 1 in mid, 2 in high, 3 out low, 4 out high) dragged to `x` on the 0..1 axis: input low and high cannot cross, mid is stored relative to the range
 pub fn drag_value(v: &[f32; 5], k: usize, x: f32) -> f32 {
     let x = if x.is_finite() { x.clamp(0.0, 1.0) } else { 0.0 };
     let (lo, hi) = (v[0].min(v[2]), v[0].max(v[2]));
@@ -78,13 +64,13 @@ pub fn drag_value(v: &[f32; 5], k: usize, x: f32) -> f32 {
     }
 }
 
-/// The histogram of what feeds the node's input, computed once per cooked result.
+/// The histogram of what feeds the node's input, computed once per cooked result
 fn input_histogram(app: &MaterialCraftApp, ui: &Ui, node: NodeId) -> Option<std::sync::Arc<Vec<[u32; BINS]>>> {
     let g = app.session.graph().ok()?;
     let c = g.input_of(node, "input")?;
     let port = app.session.output_ports(c.from).iter().position(|p| *p == c.from_port)?;
     let r = app.session.cooked.nodes.get(&c.from)?;
-    let img = r.outputs.get(port)?;
+    let img = r.outputs.get(port)?.as_image()?;
     let id = egui::Id::unique(("levels-histogram", r.key, port));
     if let Some(h) = ui.ctx().data(|d| d.get_temp::<std::sync::Arc<Vec<[u32; BINS]>>>(id)) {
         return Some(h);
@@ -94,18 +80,18 @@ fn input_histogram(app: &MaterialCraftApp, ui: &Ui, node: NodeId) -> Option<std:
     Some(h)
 }
 
-/// A handle: a small triangle pointing up at `x`, filled with `fill`.
+/// A handle: a small triangle pointing up at `x`, filled with `fill`
 fn handle(p: &egui::Painter, x: f32, top: f32, fill: Color32, active: bool, tk: &Tokens) {
     let s = 6.0;
     let pts = vec![pos2(x, top), pos2(x - s, top + s * 1.6), pos2(x + s, top + s * 1.6)];
     p.add(Shape::convex_polygon(pts, fill, Stroke::new(if active { 1.5 } else { 1.0 }, if active { tk.accent } else { Color32::from_gray(0x10) })));
 }
 
-/// The editor for Levels node `n`.
+/// The editor for Levels node `n`
 pub fn show(app: &mut MaterialCraftApp, ui: &mut Ui, n: &Node) {
     let tk = Tokens::get(ui.ctx());
     let v = values(n);
-    // Handles of parameters driven by an input or a function are left alone.
+    // Handles of parameters driven by an input or a function are left alone
     let locked = |id: &str| n.bindings.contains_key(id) || n.functions.contains_key(id);
     let ids = ["in_low", "in_mid", "in_high", "out_low", "out_high"];
     let w = ui.available_width().max(120.0);
@@ -117,7 +103,7 @@ pub fn show(app: &mut MaterialCraftApp, ui: &mut Ui, n: &Node) {
     let p = ui.painter_at(rect.expand(2.0));
     p.rect_filled(plot, 2.0, Color32::from_gray(0x16));
 
-    // The input histogram.
+    // The input histogram
     match input_histogram(app, ui, n.id) {
         Some(h) => {
             let k = scale(&h);
@@ -130,6 +116,7 @@ pub fn show(app: &mut MaterialCraftApp, ui: &mut Ui, n: &Node) {
                     Color32::from_rgba_unmultiplied(0x50, 0x80, 0xf0, 110),
                 ]
             };
+
             let bw = plot.width() / BINS as f32;
             for (bins, col) in h.iter().zip(colors) {
                 for (i, &c) in bins.iter().enumerate() {
@@ -146,7 +133,7 @@ pub fn show(app: &mut MaterialCraftApp, ui: &mut Ui, n: &Node) {
             p.text(plot.center(), egui::Align2::CENTER_CENTER, tr("Connect an input to see its histogram"), egui::FontId::proportional(10.5), tk.text_dim);
         }
     }
-    // Shade what the input range clips, and draw the transfer curve.
+    // Shade what the input range clips, and draw the transfer curve
     let (lo, hi) = (v[0].min(v[2]), v[0].max(v[2]));
     let shade = Color32::from_black_alpha(120);
     p.rect_filled(Rect::from_min_max(plot.min, pos2(axis(lo), plot.bottom())), 0.0, shade);
@@ -162,7 +149,7 @@ pub fn show(app: &mut MaterialCraftApp, ui: &mut Ui, n: &Node) {
     p.add(Shape::line(curve, Stroke::new(1.5, tk.accent)));
     p.rect_stroke(plot, 2.0, Stroke::new(1.0, Color32::from_gray(0x40)), StrokeKind::Inside);
 
-    // Input handles under the histogram, output handles under the gradient bar.
+    // Input handles under the histogram, output handles under the gradient bar
     let in_row = plot.bottom() + 2.0;
     let bar = Rect::from_min_max(pos2(plot.left(), in_row + 16.0), pos2(plot.right(), in_row + 26.0));
     let mesh = {
@@ -175,13 +162,14 @@ pub fn show(app: &mut MaterialCraftApp, ui: &mut Ui, n: &Node) {
         m.add_triangle(0, 2, 3);
         m
     };
+
     p.add(Shape::mesh(mesh));
     let out_row = bar.bottom() + 2.0;
     let xs = [v[0], mid_position(&v), v[2], v[3], v[4]];
     let rows = [in_row, in_row, in_row, out_row, out_row];
     let fills = [Color32::from_gray(0x08), Color32::from_gray(0x80), Color32::WHITE, Color32::from_gray(0x08), Color32::WHITE];
     let names = ["Level in low", "Level in mid", "Level in high", "Level out low", "Level out high"];
-    // Mid last, so it wins where it overlaps low or high.
+    // Mid last, so it wins where it overlaps low or high
     for k in [0usize, 2, 3, 4, 1] {
         let x = axis(xs[k].clamp(0.0, 1.0));
         let hit = Rect::from_min_size(pos2(x - 7.0, rows[k] - 1.0), vec2(14.0, 13.0));
@@ -215,9 +203,9 @@ mod tests {
         let color = Image::filled(2, 2, Kind::Color, [2.0, f32::NAN, -1.0, 0.5]);
         let h = histogram(&color);
         assert_eq!(h.len(), 3);
-        // Out of range and NaN values land in the end bins.
+        // Out of range and NaN values land in the end bins
         assert_eq!((h[0][255], h[1][0], h[2][0]), (4, 4, 4));
-        // The scale ignores the end bins when there is anything in between.
+        // The scale ignores the end bins when there is anything in between
         assert_eq!(scale(&[[0; BINS]]), 1.0);
     }
 
@@ -225,19 +213,19 @@ mod tests {
     fn input_handles_do_not_cross_and_mid_follows_the_range() {
         let v = [0.2, 0.5, 0.6, 0.0, 1.0];
         assert!((mid_position(&v) - 0.4).abs() < 1e-6);
-        // Low cannot pass high, high cannot pass low.
+        // Low cannot pass high, high cannot pass low
         assert!(drag_value(&v, 0, 0.9) < 0.6);
         assert!(drag_value(&v, 2, 0.1) > 0.2);
         assert_eq!(drag_value(&v, 0, -1.0), 0.0);
         assert_eq!(drag_value(&v, 2, 2.0), 1.0);
-        // Mid is stored relative to the range, kept inside it.
+        // Mid is stored relative to the range, kept inside it
         assert!((drag_value(&v, 1, 0.3) - 0.25).abs() < 1e-5);
         assert_eq!(drag_value(&v, 1, 0.0), 0.01);
         assert_eq!(drag_value(&v, 1, 1.0), 0.99);
-        // Output handles may cross (that inverts); NaN never escapes.
+        // Output handles may cross (that inverts); NaN never escapes
         assert_eq!(drag_value(&v, 3, 0.8), 0.8);
         assert_eq!(drag_value(&v, 4, f32::NAN), 0.0);
-        // A collapsed range keeps mid centered.
+        // A collapsed range keeps mid centered
         assert_eq!(drag_value(&[0.5, 0.3, 0.5, 0.0, 1.0], 1, 0.7), 0.5);
     }
 }

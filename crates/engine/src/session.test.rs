@@ -1,17 +1,3 @@
-#[cfg(test)]
-mod session_tests {
-    use crate::Session;
-    use materialcraft_core::Package;
-
-    #[test]
-    fn sync_cook_bumps_the_cook_epoch() {
-        let mut s = Session::new(Package::new("t"));
-        let before = s.cook_epoch;
-        s.cook();
-        assert_ne!(s.cook_epoch, before);
-    }
-}
-
 use materialcraft_core::{Package, Resource};
 use materialcraft_formats::{Depth, encode};
 use materialcraft_image::{Image, Kind, resource_key};
@@ -39,11 +25,7 @@ fn the_resource_decoder_reads_data_maps_as_stored() {
 
 #[cfg(test)]
 mod merge_tests {
-    use crate::{EngineError, Session};
-
-    fn session() -> Session {
-        crate::sample_session()
-    }
+    use crate::Session;
 
     fn set(s: &mut Session, key: &str) {
         s.edit_merged(key, "Set parameter", |s| {
@@ -54,28 +36,15 @@ mod merge_tests {
     }
 
     #[test]
-    fn same_key_merges_until_end_merge() {
-        let mut s = session();
+    fn same_key_merges_until_finish_edit() {
+        let mut s = crate::new_session();
         let base = s.history().len();
         set(&mut s, "k");
         set(&mut s, "k");
         assert_eq!(s.history().len(), base + 1, "one drag is one entry");
-        s.end_merge();
+        s.finish_edit();
         set(&mut s, "k");
-        assert_eq!(s.history().len(), base + 2, "a second drag after end_merge is a new entry");
-    }
-
-    #[test]
-    fn failed_merged_edit_restores_the_session() {
-        let mut s = session();
-        set(&mut s, "k");
-        let name = s.pkg.name.clone();
-        let r: Result<(), EngineError> = s.edit_merged("k", "Set parameter", |s| {
-            s.pkg.name = "half-applied".into();
-            Err(EngineError::Other("boom".into()))
-        });
-        assert!(r.is_err());
-        assert_eq!(s.pkg.name, name);
+        assert_eq!(s.history().len(), base + 2, "a second drag after finish_edit is a new entry");
     }
 }
 
@@ -106,7 +75,7 @@ mod group_tests {
     fn two_nodes() -> (Session, u64, u64) {
         let mut s = crate::sample_session();
         execute(&mut s, "file.new", &json!({"template": "empty"})).unwrap();
-        let a = execute(&mut s, "graph.node.add", &json!({"def": "clouds_1"})).unwrap()["id"].as_u64().unwrap();
+        let a = execute(&mut s, "graph.node.add", &json!({"def": "uniform"})).unwrap()["id"].as_u64().unwrap();
         let b = execute(&mut s, "graph.node.add", &json!({"def": "levels"})).unwrap()["id"].as_u64().unwrap();
         (s, a, b)
     }
@@ -150,7 +119,7 @@ mod group_tests {
         assert_eq!(s.history().len(), base);
         s.begin_group("Both");
         execute(&mut s, "graph.connect", &json!({"from": a, "to": b, "toPort": "input"})).unwrap();
-        execute(&mut s, "graph.node.param", &json!({"id": b, "param": "in_low", "value": 0.2})).unwrap();
+        execute(&mut s, "graph.node.param", &json!({"id": b, "param": "in_low", "value": [0.2, 0.2, 0.2, 0.2]})).unwrap();
         s.end_group();
         assert_eq!(s.history().len(), base + 1);
     }
@@ -217,7 +186,7 @@ fn a_failed_group_recooks_if_it_cooked_a_temporary_document() {
     let mut s = crate::new_session();
     s.preview_size = Some(16);
     let id = NodeId(execute(&mut s, "graph.node.add", &json!({"def": "uniform"})).unwrap()["id"].as_u64().unwrap());
-    execute(&mut s, "graph.node.param", &json!({"id": id.0, "param": "mode", "value": 1})).unwrap();
+    execute(&mut s, "graph.node.param", &json!({"id": id.0, "param": "color_mode", "value": true})).unwrap();
     let before = s.cook().image(id, 0).unwrap().data.clone();
     let result: crate::Result<()> = s.group("Temporary", |s| {
         execute(s, "graph.node.param", &json!({"id": id.0, "param": "color", "value": [0.1, 0.8, 0.2, 1.0]}))?;

@@ -1,9 +1,4 @@
-//! File menu: new/open/save packages, new graphs from templates, bitmap resources and texture
-//! export. Host-path commands are native only; the browser and agents use the byte-based
-//! functions (`open_bytes`, `save_bytes`, `export_outputs`).
-//!
-//! SBS (`.sbs`) is the main project format; `.mcraft` packages still open and save as `.mcraft`.
-//! What an SBS file holds that MaterialCraft can't read is a warning (Console, `package.warnings`), never an error.
+pub use crate::Exported;
 
 use serde_json::{Value as J, json};
 
@@ -21,7 +16,7 @@ pub(crate) fn specs() -> Vec<CommandSpec> {
             "Graph...",
             ["File", "New"],
             Some("Ctrl+N"),
-            "{name?, template? (see graph.templates), size? (px, power of two)} adds a new graph to the package and opens it",
+            "{name?, kind? (material|function), template? (see graph.templates), size? (px, power of two)} adds a new graph to the package and opens it",
             always,
             new_graph
         ),
@@ -31,19 +26,11 @@ pub(crate) fn specs() -> Vec<CommandSpec> {
             "Open...",
             ["File"],
             Some("Ctrl+O"),
-            "{path} opens an .sbs or .mcraft package (or a .mcmat material's source); returns `warnings` for what an SBS file holds that MaterialCraft can't read yet, and `path`, null for a file another program wrote (Save then needs a new `path`)",
+            "{path} opens an SBS package; returns `warnings` and `path` (null when unsupported content requires Save As)",
             always,
             open
         ),
-        cmd!(
-            "file.save",
-            "Save",
-            ["File"],
-            Some("Ctrl+S"),
-            "{path?} saves the package to its own file or `path`: SBS (.sbs, the default; appended when `path` has no package extension) or .mcraft",
-            always,
-            save
-        ),
+        cmd!("file.save", "Save", ["File"], Some("Ctrl+S"), "{path?} saves native SBS to the current file or `path`", always, save),
         cmd!("file.saveAs", "Save as...", ["File"], Some("Ctrl+Shift+S"), "{path} saves the package under a new name", always, save),
         cmd!(
             "file.export",
@@ -69,36 +56,60 @@ pub(crate) fn specs() -> Vec<CommandSpec> {
     ]
 }
 
-fn new_graph(s: &mut Session, p: &J) -> Result<J> {
-    let tpl = strp(p, "template").unwrap_or("pbr");
-    let label = TEMPLATES.iter().find(|t| t.0 == tpl).map_or("Graph", |t| t.1);
-    let size = u64p(p, "size").unwrap_or(1024).clamp(16, 8192);
+fn new_graph(session: &mut Session, parameters: &J) -> Result<J> {
+    let kind = match strp(parameters, "kind").unwrap_or("material") {
+        "material" => materialcraft_core::GraphKind::Material,
+        "function" => materialcraft_core::GraphKind::Function,
+        _ => return Err(bad("file.new", "kind must be material or function")),
+    };
+    let template_id = strp(parameters, "template").unwrap_or("pbr");
+    let label = if kind == materialcraft_core::GraphKind::Function {
+        "Function Graph"
+    } else {
+        TEMPLATES.iter().find(|entry| entry.0 == template_id).map_or("Graph", |entry| entry.1)
+    };
+    let size = u64p(parameters, "size").unwrap_or(1024).clamp(16, 8192);
     let log2 = 63 - size.leading_zeros();
-    let base = strp(p, "name").map(str::to_string).unwrap_or_else(|| label.replace(' ', "_"));
-    s.edit("New graph", |s| {
-        let name = s.pkg.unique_graph_name(&base);
-        s.pkg.graphs.push(template(tpl, &name, log2));
-        s.graph = s.pkg.graphs.len() - 1;
-        s.selection.clear();
-        s.view2d.node = None;
-        Ok(json!({"graph": s.graph, "name": name}))
+    let base = strp(parameters, "name").map(str::to_string).unwrap_or_else(|| label.replace(' ', "_"));
+
+    session.edit("New graph", |session| {
+        let name = session.pkg.unique_graph_name(&base);
+        let graph = if kind == materialcraft_core::GraphKind::Function {
+            let mut graph = materialcraft_core::Graph::new(&name);
+            graph.function = Some(materialcraft_core::FunctionGraph::default());
+            graph
+        } else {
+            template(template_id, &name, log2)?
+        };
+        session.pkg.graphs.push(graph);
+        session.graph = session.pkg.graphs.len() - 1;
+        session.open_material_preview();
+        session.selection.clear();
+        session.annotation_selection = None;
+        session.view2d.node = None;
+        Ok(json!({"graph": session.graph, "name": name, "kind": kind}))
     })
 }
 
 fn new_package(s: &mut Session, p: &J) -> Result<J> {
     let mut pkg = Package::new(strp(p, "name").unwrap_or("Untitled package"));
-    pkg.graphs.push(template("pbr", "New_graph", 10));
+    pkg.graphs.push(template("pbr", "New_graph", 10)?);
     replace_package(s, pkg, None);
     Ok(json!({"name": s.pkg.name}))
 }
 
-/// Make `pkg` the session's document (after open/new): history and views reset.
+/// Make `pkg` the session's document (after open/new): history and views reset
 pub fn replace_package(s: &mut Session, pkg: Package, path: Option<String>) {
     s.pkg = pkg;
+    s.clipboard = None;
+    s.embedded_clipboard = None;
     s.clear_decoded();
     s.path = path;
     s.graph = 0;
+    s.material_preview = crate::MaterialPreview::for_graph(&s.pkg, 0);
+    s.clear_preview_results();
     s.selection.clear();
+    s.annotation_selection = None;
     s.view2d.node = None;
     s.reset_history();
     s.modified = false;
@@ -106,97 +117,46 @@ pub fn replace_package(s: &mut Session, pkg: Package, path: Option<String>) {
     s.load_warnings.clear();
 }
 
-/// A package file format.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum PackageFormat {
-    /// SBS XML, the main project format.
-    Sbs,
-    /// The older native zip format.
-    Mcraft,
-}
-
-impl PackageFormat {
-    /// The format a file at `path` is saved in: `.mcraft` stays `.mcraft`, anything else is SBS.
-    pub fn of_path(path: &str) -> PackageFormat {
-        if has_extension(path, PackageFormat::Mcraft.ext()) { PackageFormat::Mcraft } else { PackageFormat::Sbs }
-    }
-
-    pub fn ext(self) -> &'static str {
-        match self {
-            PackageFormat::Sbs => materialcraft_formats::sbs::SBS_EXT,
-            PackageFormat::Mcraft => materialcraft_core::PACKAGE_EXT,
-        }
-    }
-}
-
 fn has_extension(path: &str, ext: &str) -> bool {
     path.rsplit_once('.').is_some_and(|(_, e)| e.eq_ignore_ascii_case(ext))
 }
 
-/// `path` with `.sbs` appended unless it already ends in `.sbs` or `.mcraft`.
 pub fn package_path(path: &str) -> String {
-    if [PackageFormat::Sbs, PackageFormat::Mcraft].iter().any(|f| has_extension(path, f.ext())) {
-        path.to_string()
-    } else {
-        format!("{path}.{}", PackageFormat::Sbs.ext())
-    }
+    if has_extension(path, materialcraft_formats::sbs::SBS_EXT) { path.to_string() } else { format!("{path}.sbs") }
 }
 
-/// Open package bytes on any platform: SBS, `.mcraft`, or a `.mcmat` material's source package.
-pub fn open_bytes(s: &mut Session, bytes: &[u8], name: Option<String>) -> Result<()> {
-    open_bytes_linked(s, bytes, name, &|_| None)
+pub fn open_bytes(session: &mut Session, bytes: &[u8], name: Option<String>) -> Result<()> {
+    open_bytes_linked(session, bytes, name, &|_| None)
 }
 
-/// [`open_bytes`] with `linked` loading files an SBS package links to; materials and SBS files from other programs open unnamed so Save can't overwrite them.
-pub fn open_bytes_linked(s: &mut Session, bytes: &[u8], name: Option<String>, linked: &dyn Fn(&str) -> Option<Vec<u8>>) -> Result<()> {
+pub fn open_bytes_linked(session: &mut Session, bytes: &[u8], name: Option<String>, linked: &dyn Fn(&str) -> Option<Vec<u8>>) -> Result<()> {
     if materialcraft_formats::material::is_material(bytes) {
         let (manifest, source) = materialcraft_formats::material::read_material(bytes)?;
-        replace_package(s, materialcraft_formats::load_package(&source)?, None);
-        s.graph = s.pkg.graph_by_name(&manifest.graph).map_or(0, |(i, _)| i);
-        return Ok(());
-    }
-
-    // A broken `.sbs` should report an SBS error, but a renamed zip package still opens
-    let named_sbs = name.as_deref().is_some_and(|n| has_extension(n, PackageFormat::Sbs.ext())) && !bytes.starts_with(b"PK");
-    if !named_sbs && !materialcraft_formats::sbs::is_sbs(bytes) {
-        replace_package(s, materialcraft_formats::load_package(bytes)?, name);
+        replace_package(session, materialcraft_formats::sbs::read_sbs(&source, "source.sbs", &|_| None)?.pkg, None);
+        session.graph = session.pkg.graph_by_name(&manifest.graph).map_or(0, |(index, _)| index);
+        session.open_material_preview();
         return Ok(());
     }
 
     let read = materialcraft_formats::sbs::read_sbs(bytes, name.as_deref().unwrap_or(""), linked)?;
-    let from_elsewhere = !read.exact;
-    replace_package(s, read.pkg, if from_elsewhere { None } else { name.clone() });
-
-    if !read.warnings.is_empty() {
-        s.warn(format!("{} opened with {} warning(s): what MaterialCraft can't read yet is listed below", s.pkg.name, read.warnings.len()));
-        for warning in &read.warnings {
-            s.warn(warning.clone());
-        }
+    let path = if read.warnings.is_empty() { name } else { None };
+    replace_package(session, read.pkg, path);
+    for warning in &read.warnings {
+        session.warn(warning.clone());
     }
-    if from_elsewhere && let Some(file) = &name {
-        s.log(format!("{file} was not saved by MaterialCraft: Save asks for a new file, so the original keeps everything MaterialCraft can't read"));
-    }
-    s.load_warnings = read.warnings;
+    session.load_warnings = read.warnings;
     Ok(())
 }
 
-/// The package as SBS bytes, the main project format.
-pub fn save_bytes(s: &Session) -> Result<Vec<u8>> {
-    save_bytes_as(s, PackageFormat::Sbs)
+pub fn save_bytes(session: &Session) -> Result<Vec<u8>> {
+    Ok(materialcraft_formats::sbs::write_sbs(&session.pkg)?)
 }
 
-pub fn save_bytes_as(s: &Session, format: PackageFormat) -> Result<Vec<u8>> {
-    Ok(match format {
-        PackageFormat::Sbs => materialcraft_formats::sbs::write_sbs(&s.pkg)?,
-        PackageFormat::Mcraft => materialcraft_formats::save_package(&s.pkg)?,
-    })
-}
-
-/// Largest file an SBS package may link to.
+/// Largest file an SBS package may link to
 #[cfg(not(target_arch = "wasm32"))]
 const MAX_LINKED_FILE_BYTES: u64 = 256 << 20;
 
-/// Reads files an SBS package at `path` links to: plain relative paths that resolve inside its folder.
+/// Reads files an SBS package at `path` links to: plain relative paths that resolve inside its folder
 #[cfg(not(target_arch = "wasm32"))]
 pub fn linked_files(path: &str) -> impl Fn(&str) -> Option<Vec<u8>> + use<> {
     let parent = std::path::Path::new(path).parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(std::path::Path::new("."));
@@ -219,7 +179,7 @@ pub fn linked_files(path: &str) -> impl Fn(&str) -> Option<Vec<u8>> + use<> {
     }
 }
 
-/// Open the package file at `path` (native), with the bitmaps an SBS package keeps next to it.
+/// Open the package file at `path` (native), with the bitmaps an SBS package keeps next to it
 #[cfg(not(target_arch = "wasm32"))]
 pub fn open_file(s: &mut Session, path: &str) -> Result<()> {
     let bytes = std::fs::read(path).map_err(|e| bad("file.open", format!("{path}: {e}")))?;
@@ -246,7 +206,7 @@ fn save(s: &mut Session, p: &J) -> Result<J> {
         None => s.path.clone().ok_or_else(|| bad("file.save", "the package has no file yet (new, or opened from another program): give a `path`"))?,
     };
 
-    let bytes = save_bytes_as(s, PackageFormat::of_path(&path))?;
+    let bytes = save_bytes(s)?;
     materialcraft_formats::write_atomic(std::path::Path::new(&path), &bytes)?;
     s.path = Some(path.clone());
     s.modified = false;
@@ -259,18 +219,12 @@ fn save(_: &mut Session, _: &J) -> Result<J> {
     Err(bad("file.save", "the browser saves with a download"))
 }
 
-/// One exported file.
-pub struct Exported {
-    pub file: String,
-    pub bytes: Vec<u8>,
-}
-
-/// Cook graph `gi` at full size and encode every output (`pattern` names files).
+/// Cook graph `gi` at full size and encode every output (`pattern` names files)
 pub fn export_outputs(s: &Session, gi: usize, ext: &str, pattern: &str, depth: Option<Depth>, size: Option<u32>) -> Result<Vec<Exported>> {
     let mut pkg = s.pkg.clone();
     if let Some(px) = size {
         let g = pkg.graph_mut(gi)?;
-        // The larger side becomes `px`; the other keeps its proportion.
+        // The larger side becomes `px`; the other keeps its proportion
         let target = 31 - px.clamp(16, 8192).leading_zeros();
         let bounded = g.size.map(|l| l.clamp(4, 13));
         let larger = bounded[0].max(bounded[1]);
@@ -299,7 +253,7 @@ pub fn export_outputs(s: &Session, gi: usize, ext: &str, pattern: &str, depth: O
     Ok(out)
 }
 
-/// Export params: (graph index, extension, pattern, depth, size).
+/// Export params: (graph index, extension, pattern, depth, size)
 pub type ExportArgs = (usize, String, String, Option<Depth>, Option<u32>);
 
 pub fn export_params(s: &Session, p: &J) -> Result<ExportArgs> {
@@ -317,6 +271,7 @@ pub fn export_params(s: &Session, p: &J) -> Result<ExportArgs> {
         Some(32) => Some(Depth::F32),
         Some(d) => return Err(bad("file.export", format!("depth must be 8, 16 or 32, not {d}"))),
     };
+
     let size = u64p(p, "size").filter(|&px| px > 0).map(|px| px.min(u64::from(u32::MAX)) as u32);
     Ok((gi, ext, pattern, depth, size))
 }
@@ -342,13 +297,13 @@ fn export(_: &mut Session, _: &J) -> Result<J> {
     Err(bad("file.export", "the browser exports with downloads"))
 }
 
-/// Embed image bytes as a resource; returns the resource name.
+/// Embed image bytes as a resource; returns the resource name
 pub fn add_resource(s: &mut Session, file: &str, bytes: Vec<u8>, name: Option<&str>) -> Result<String> {
     materialcraft_formats::decode(&bytes, false)?;
     s.edit("Import bitmap", |s| Ok(push_resource(&mut s.pkg, file, bytes, name)))
 }
 
-/// Add `bytes` to `pkg` as a resource named `name` (or after `file`), made unique; returns the name.
+/// Add `bytes` to `pkg` as a resource named `name` (or after `file`), made unique; returns the name
 pub(crate) fn push_resource(pkg: &mut Package, file: &str, bytes: Vec<u8>, name: Option<&str>) -> String {
     let file = materialcraft_formats::safe_file_name(file);
     let stem = name.map(str::to_string).unwrap_or_else(|| file.rsplit_once('.').map_or(file.clone(), |(a, _)| a.to_string()));

@@ -1,6 +1,6 @@
 use materialcraft_engine::{
     Session,
-    core::{NodeId, Value, function::FnGraph},
+    core::{FunctionGraph, NodeId, Value},
     execute, formats, new_session,
 };
 use serde_json::{Value as Json, json};
@@ -19,9 +19,9 @@ fn setup() -> (Session, NodeId) {
 
 fn drive(s: &mut Session, id: NodeId, param: &str, value: f32, function: bool) {
     if function {
-        run(s, "graph.node.function", json!({"id": id.0, "param": param, "function": FnGraph::constant(Value::Float(value))}));
+        run(s, "graph.node.function", json!({"id": id.0, "param": param, "function": FunctionGraph::constant(Value::Float4([value; 4]))}));
     } else {
-        run(s, "graph.exposed.add", json!({"id": param, "default": value, "bind": {"node": id.0, "param": param}}));
+        run(s, "graph.exposed.add", json!({"id": param, "default": Value::Float4([value; 4]), "bind": {"node": id.0, "param": param}}));
     }
 }
 
@@ -65,7 +65,7 @@ fn resetting_all_parameters_removes_drivers_and_restores_default_output() {
     let (mut s, id) = setup();
     drive(&mut s, id, "in_low", 0.4, false);
     drive(&mut s, id, "out_high", 0.8, true);
-    run(&mut s, "graph.node.param", json!({"id": id.0, "param": "out_low", "value": 0.1}));
+    run(&mut s, "graph.node.param", json!({"id": id.0, "param": "out_low", "value": [0.1, 0.1, 0.1, 0.1]}));
     let before = s.pkg.graphs.clone();
     let driven = pixel(&mut s, id);
     assert!((driven - 0.5).abs() > 0.1);
@@ -81,7 +81,8 @@ fn resetting_all_parameters_removes_drivers_and_restores_default_output() {
     assert!((pixel(&mut s, id) - driven).abs() < 1e-5);
     run(&mut s, "edit.redo", json!({}));
     assert!((pixel(&mut s, id) - 0.5).abs() < 1e-5);
-    let mut reopened = Session::new(formats::load_package(&formats::save_package(&s.pkg).unwrap()).unwrap());
+    let mut reopened = Session::new(formats::sbs::read_sbs(&formats::sbs::write_sbs(&s.pkg).unwrap(), "test.sbs", &|_| None).unwrap().pkg);
     reopened.preview_size = Some(32);
-    assert!((pixel(&mut reopened, id) - 0.5).abs() < 1e-5);
+    let reopened_id = reopened.graph().unwrap().nodes.iter().find(|node| node.def == "levels").unwrap().id;
+    assert!((pixel(&mut reopened, reopened_id) - 0.5).abs() < 1e-5);
 }

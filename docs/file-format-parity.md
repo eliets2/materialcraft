@@ -1,5 +1,13 @@
 # File format parity
 
+> The assessment below predates the 2026-11-05 primitive rewrite. Its old library counts and
+> compatibility claims are historical. See [atomic-workflow.md](atomic-workflow.md) and
+> [ROADMAP.md](../ROADMAP.md) for the current scope and remaining validation.
+
+Current integration also provides workspace-scoped `material_export`, real Height displacement
+from the assigned material, explicit normal-map convention, and linear bitmap/input previews.
+The native SBS and primitive-library limitations in [atomic-workflow.md](atomic-workflow.md) remain.
+
 > **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-04 · **Change:** major (SBS is the main project format) · **Target:** the professional node-based material workflow
 
 SBS packages are MaterialCraft's main project format (issue #49), read and written with its own
@@ -9,7 +17,7 @@ material artists exchange.
 
 | Format | Read | Write | Fidelity | Tests |
 |---|---|---|---|---|
-| `.sbs` package (XML), the main format | Yes: atomic filters, library nodes with a MaterialCraft node of the same name (88 of the 491 in `assets/sbs/all_nodes.sbs`), graph instances, graph inputs/outputs, exposed values, parameters linked to inputs, supported float parameter expressions, base parameters, frames, comments, embedded and linked bitmaps and SVGs. Anything else (missing nodes, curve points, gradient keys, unsupported function graphs, environment maps) is a Console warning; missing nodes stay as placeholders | Yes: SBS data with bitmaps embedded, plus MaterialCraft's exact copy | Lossless for files MaterialCraft saved (exact copy, guarded by a content hash); placeholders round-trip their SBS data | `formats::sbs::tests`, engine `sbs_is_the_default_save_format_and_mcraft_still_works`, `an_sbs_file_with_missing_nodes_opens_softly` |
+| `.sbs` package (XML), the main format | Yes: atomic filters, library nodes with a MaterialCraft node of the same name (88 of the 491 in `assets/sbs/all_nodes.sbs`), graph instances, graph inputs/outputs, exposed values, parameters linked to inputs, base parameters, frames, comments, embedded and linked bitmaps and SVGs. Anything else (missing nodes, curve points, gradient keys, function graphs, environment maps) is a Console warning; missing nodes stay as placeholders | Yes: SBS data with bitmaps embedded, plus MaterialCraft's exact copy | Lossless for files MaterialCraft saved (exact copy, guarded by a content hash); placeholders round-trip their SBS data | `formats::sbs::tests`, engine `sbs_is_the_default_save_format_and_mcraft_still_works`, `an_sbs_file_with_missing_nodes_opens_softly` |
 | `.mcraft` package (zip: `package.json` + `resources/`), older | Yes | Yes | Lossless (graphs, parameters, frames, comments, pins, exposed inputs, embedded bitmaps) | `formats::tests::package_round_trip`, engine `package_save_and_open_round_trip` |
 | PNG | Yes (8/16-bit, gray and color) | Yes (8/16-bit) | 16-bit gray round-trips within 1/65535 | `formats::tests::export_every_format` |
 | JPEG | Yes | Yes (8-bit) | Lossy | same |
@@ -25,17 +33,6 @@ material artists exchange.
 
 Exports write base color, emissive and specular through the sRGB curve and data maps (normal,
 roughness, metallic, height, ambient occlusion, opacity) linear.
-
-SBS float parameter expressions can also be read structurally from `dynamicValue`: Float1–4
-constants, typed `get_float1`–`get_float4` references to exposed inputs, `add`, `sub`, `mul`, `div`,
-and unary `neg`, `abs`, `floor`, `ceil`, `cos`, `sin`, `sqrt`, `log` and `exp`. Connections use their
-named inputs, independent of XML order. Import is capped at 4096 nodes per expression and validates
-the root, connections, variable types and output dimensions. Unsupported or malformed expressions
-keep the parameter default and produce a warning with the reason.
-
-These expressions remain live when exposed values change and are preserved in MaterialCraft's
-embedded exact package on save. Structural expression writing, standalone function assets,
-processor functions, integer/string expressions and external function instances remain gaps.
 
 ## Revision history
 

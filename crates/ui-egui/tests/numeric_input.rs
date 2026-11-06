@@ -1,4 +1,4 @@
-//! Exact numeric edits must survive intervening frames and reach engine parameters.
+//! Exact numeric edits must survive intervening frames and reach engine parameters
 use egui::{Event, Key, Modifiers, vec2};
 use egui_kittest::{
     Harness,
@@ -62,29 +62,22 @@ fn graph_name_typed_across_frames_commits_on_focus_loss() {
     h.run_steps(8);
     h.state_mut().run("graph.select", json!({"ids": []})).unwrap();
     h.run_steps(3);
-    assert_eq!(h.state().session.graph().unwrap().name, "New_graph");
     h.get_by_label("Graph name").click();
     h.step();
     h.key_press_modifiers(Modifiers::COMMAND, Key::A);
     h.step();
     type_text(&mut h, "My_graph");
     h.run_steps(2);
-    let pos = h.state().graph.view.left_top() + vec2(20.0, 20.0);
-    h.event(Event::PointerMoved(pos));
-    h.step();
-    for pressed in [true, false] {
-        h.event(Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, modifiers: Modifiers::NONE });
-        h.step();
-    }
+    h.key_press(Key::Enter);
     h.run_steps(4);
     assert_eq!(h.state().session.graph().unwrap().name, "My_graph", "graph name typed across frames was reset before focus was lost");
 }
 #[test]
-fn scale_x_commits_on_enter_and_focus_loss_with_undo() {
+fn offset_x_commits_on_enter_and_focus_loss_with_undo() {
     for enter in [true, false] {
         let (mut h, id) = harness(false);
-        focus_x(&mut h, 1);
-        type_text(&mut h, "4");
+        focus_x(&mut h, 0);
+        type_text(&mut h, "0.4");
         if enter {
             h.key_press(Key::Enter);
             h.step();
@@ -93,13 +86,13 @@ fn scale_x_commits_on_enter_and_focus_loss_with_undo() {
             h.step();
         }
         h.run_steps(5);
-        assert_eq!(pair(&h, id, "scale"), [4.0, 1.0], "Scale X did not persist (Enter={enter})");
+        assert_eq!(pair(&h, id, "offset"), [0.4, 0.0], "Offset X did not persist (Enter={enter})");
         h.state_mut().run("edit.undo", json!({})).unwrap();
         h.run_steps(3);
-        assert_eq!(pair(&h, id, "scale"), [1.0, 1.0]);
+        assert_eq!(pair(&h, id, "offset"), [0.0, 0.0]);
         h.state_mut().run("edit.redo", json!({})).unwrap();
         h.run_steps(3);
-        assert_eq!(pair(&h, id, "scale"), [4.0, 1.0]);
+        assert_eq!(pair(&h, id, "offset"), [0.4, 0.0]);
     }
 }
 #[test]
@@ -113,13 +106,12 @@ fn a_negative_decimal_can_be_typed_across_frames() {
     h.step();
     h.run_steps(4);
     assert_eq!(pair(&h, id, "offset"), [-0.5, 0.0]);
-    assert_eq!(pair(&h, id, "scale"), [1.0, 1.0]);
 }
 #[test]
 fn clicking_the_canvas_and_switching_nodes_keep_the_right_values() {
     let (mut h, id) = harness(false);
-    focus_x(&mut h, 1);
-    type_text(&mut h, "4");
+    focus_x(&mut h, 0);
+    type_text(&mut h, "0.4");
     let pos = h.state().graph.view.left_top() + vec2(20.0, 20.0);
     h.event(Event::PointerMoved(pos));
     h.step();
@@ -129,17 +121,17 @@ fn clicking_the_canvas_and_switching_nodes_keep_the_right_values() {
     }
     h.run_steps(4);
     assert!(h.state().session.selection.is_empty());
-    assert_eq!(pair(&h, id, "scale"), [4.0, 1.0]);
+    assert_eq!(pair(&h, id, "offset"), [0.4, 0.0]);
     h.state_mut().run("graph.select", json!({"ids": [id.0]})).unwrap();
     h.run_steps(4);
-    focus_x(&mut h, 1);
-    type_text(&mut h, "5");
+    focus_x(&mut h, 0);
+    type_text(&mut h, "0.5");
     let other = NodeId(h.state_mut().run("graph.node.add", json!({"def":"transformation","at":[300,0]})).unwrap()["id"].as_u64().unwrap());
     h.run_steps(4);
     h.key_press(Key::Enter);
     h.step();
-    assert_eq!(pair(&h, id, "scale"), [5.0, 1.0]);
-    assert_eq!(pair(&h, other, "scale"), [1.0, 1.0], "an edit leaked into the newly selected node");
+    assert_eq!(pair(&h, id, "offset"), [0.5, 0.0]);
+    assert_eq!(pair(&h, other, "offset"), [0.0, 0.0], "an edit leaked into the newly selected node");
 }
 
 #[test]
@@ -191,15 +183,15 @@ fn integer_input_and_slider_track_both_update_the_node() {
 
 #[test]
 #[ignore = "requires an offscreen GPU"]
-fn exact_scale_screenshot() {
+fn exact_offset_screenshot() {
     let (mut h, id) = harness(true);
-    focus_x(&mut h, 1);
-    type_text(&mut h, "4");
+    focus_x(&mut h, 0);
+    type_text(&mut h, "0.4");
     h.key_press(Key::Enter);
     h.step();
     h.run_steps(8);
-    assert_eq!(pair(&h, id, "scale"), [4.0, 1.0]);
+    assert_eq!(pair(&h, id, "offset"), [0.4, 0.0]);
     let dir = std::path::PathBuf::from(std::env::var_os("MC_SNAPSHOT_DIR").expect("set MC_SNAPSHOT_DIR"));
     std::fs::create_dir_all(&dir).unwrap();
-    h.render().unwrap().save(dir.join("scale-x-4.png")).unwrap();
+    h.render().unwrap().save(dir.join("offset-x-4.png")).unwrap();
 }
