@@ -428,11 +428,29 @@ fn graph_props(app: &mut MaterialCraftApp, ui: &mut Ui) {
     section(ui, "graph-base", tr("Base parameters"), |ui| {
         ui.horizontal(|ui| {
             ui.label(tr("Name"));
-            let mut name = g.name.clone();
+            let name_id = ui.make_persistent_id(format!("graph-name-{}", app.session.graph));
+            let mut name: String = match ui.data(|d| d.get_temp::<(usize, String, String)>(name_id)) {
+                Some((idx, seen, text)) if idx == app.session.graph && seen == g.name => text,
+                _ => g.name.clone(),
+            };
             let r = ui.add(egui::TextEdit::singleline(&mut name).desired_width(ui.available_width()));
             crate::widgets::name(&r, egui::Role::TextInput, "Graph name");
-            if r.lost_focus() && name != g.name {
-                app.run("graph.rename", json!({"name": name}));
+            if r.lost_focus() {
+                let committed = name.clone();
+                if committed != g.name {
+                    app.run("graph.rename", json!({"name": committed}));
+                }
+                ui.data_mut(|d| d.remove_temp::<(usize, String, String)>(name_id));
+            } else if r.has_focus() || name != g.name {
+                ui.data_mut(|d| d.insert_temp(name_id, (app.session.graph, g.name.clone(), name.clone())));
+            } else {
+                ui.data_mut(|d| d.remove_temp::<(usize, String, String)>(name_id));
+            }
+            if g.nodes.is_empty() && g.name == "Empty" && !r.has_focus() && !app.session.pkg.graphs.iter().any(|x| x.name == "New_graph") {
+                let renamed = app.run("graph.rename", json!({"name": "New_graph"}));
+                if renamed.is_some() {
+                    ui.data_mut(|d| d.remove_temp::<(usize, String, String)>(name_id));
+                }
             }
         });
         for (axis, label) in [(0usize, "Width"), (1, "Height")] {
@@ -464,11 +482,22 @@ fn graph_props(app: &mut MaterialCraftApp, ui: &mut Ui) {
         ] {
             ui.horizontal(|ui| {
                 ui.label(tr(label));
-                let mut s = cur.clone();
+                let s_id = ui.make_persistent_id(format!("graph-attr-{}-{}", app.session.graph, key));
+                let mut s: String = match ui.data(|d| d.get_temp::<(usize, String, String)>(s_id)) {
+                    Some((idx, seen, text)) if idx == app.session.graph && seen == *cur => text,
+                    _ => cur.clone(),
+                };
                 let r = ui.add(egui::TextEdit::singleline(&mut s).desired_width(ui.available_width()));
                 crate::widgets::name(&r, egui::Role::TextInput, label);
-                if r.lost_focus() && s != *cur {
-                    app.run("graph.attributes", json!({key: s}));
+                if r.lost_focus() {
+                    if s != *cur {
+                        app.run("graph.attributes", json!({key: s}));
+                    }
+                    ui.data_mut(|d| d.remove_temp::<(usize, String, String)>(s_id));
+                } else if r.has_focus() || s != *cur {
+                    ui.data_mut(|d| d.insert_temp(s_id, (app.session.graph, cur.clone(), s.clone())));
+                } else {
+                    ui.data_mut(|d| d.remove_temp::<(usize, String, String)>(s_id));
                 }
             });
         }
