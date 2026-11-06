@@ -21,25 +21,6 @@ pub struct View2dState {
 
 const BINS: usize = 64;
 
-/// Both views use the same cooked material resolution and the same engine command.
-pub(crate) fn resolution_menu(app: &mut MaterialCraftApp, ui: &mut Ui) {
-    let selected = app.session.preview_size.map_or_else(|| tr("Full size").to_string(), |size| format!("{size} px"));
-    let response = egui::ComboBox::from_id_salt("preview_resolution")
-        .selected_text(selected)
-        .width(85.0)
-        .show_ui(ui, |ui| {
-            for size in [256u32, 512, 1024, 2048, 4096, 0] {
-                let label = if size == 0 { tr("Full size").to_string() } else { format!("{size} px") };
-                if ui.selectable_label(app.session.preview_size.unwrap_or(0) == size, label).clicked() {
-                    app.run("view.previewSize", json!({"size": size}));
-                }
-            }
-        })
-        .response;
-    crate::widgets::name(&response, egui::Role::ComboBox, "Preview resolution");
-    response.on_hover_text(tr("Preview size while editing"));
-}
-
 /// Histograms of the displayed 8-bit values: one for gray or isolated channels, else R, G and B.
 fn histogram(px: &[u8], channels: usize) -> Vec<[u32; BINS]> {
     let mut h = vec![[0u32; BINS]; channels];
@@ -52,7 +33,7 @@ fn histogram(px: &[u8], channels: usize) -> Vec<[u32; BINS]> {
 }
 
 pub fn title(app: &MaterialCraftApp) -> String {
-    let name = app.session.view2d_image().and_then(|(id, _)| app.session.graph().ok()?.node(id).ok().map(crate::graph_view::node_label));
+    let name = app.session.view2d_image().and_then(|(id, _)| app.session.graph().ok()?.node(id).ok().map(crate::graph::node_label));
     format!("{} - {}", name.unwrap_or_default(), tr("2D View"))
 }
 
@@ -77,7 +58,7 @@ pub fn show(app: &mut MaterialCraftApp, ui: &mut Ui) {
     // Toolbar.
     egui::Frame::NONE.fill(tk.panel).inner_margin(egui::Margin::symmetric(6, 3)).show(ui, |ui| {
         ui.horizontal(|ui| {
-            resolution_menu(app, ui);
+            crate::preview_resolution::show(app, ui);
             for (c, label) in [("rgba", "RGBA"), ("r", "R"), ("g", "G"), ("b", "B"), ("a", "A")] {
                 if crate::widgets::chip(ui, label, app.session.view2d.channel == c).clicked() {
                     app.run("view.2d", json!({"channel": c}));
@@ -253,7 +234,7 @@ fn draw_histogram(st: &mut View2dState, p: &egui::Painter, rect: Rect, key: u64,
 #[cfg(not(target_arch = "wasm32"))]
 fn save_image(app: &mut MaterialCraftApp) {
     let Some((id, img)) = app.session.view2d_image().map(|(id, i)| (id, i.clone())) else { return };
-    let name = app.session.graph().ok().and_then(|g| g.node(id).ok().map(crate::graph_view::node_label)).unwrap_or_else(|| "image".into());
+    let name = app.session.graph().ok().and_then(|g| g.node(id).ok().map(crate::graph::node_label)).unwrap_or_else(|| "image".into());
     let Some(path) = rfd::FileDialog::new()
         .set_file_name(format!("{name}.png"))
         .add_filter("PNG", &["png"])

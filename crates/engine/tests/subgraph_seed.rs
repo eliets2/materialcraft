@@ -12,7 +12,11 @@ fn grouping_noise_preserves_pixels_seed_and_undo() {
         s.preview_size = None;
         run(&mut s, "graph.size", json!({"width": 64, "height": 32}));
         run(&mut s, "graph.seed", json!({"seed": seed}));
-        let noise = run(&mut s, "graph.node.add", json!({"def": "perlin_noise"}))["id"].as_u64().unwrap();
+        let noise = run(&mut s, "graph.node.add", json!({"def": "pixel_processor"}))["id"].as_u64().unwrap();
+        let mut function = materialcraft_engine::core::FunctionGraph::default();
+        let maximum = function.add_constant(materialcraft_engine::core::Value::Float(1.0));
+        function.output = Some(function.add("rand", &[maximum], None));
+        run(&mut s, "graph.node.param", json!({"id": noise, "param": "function", "value": materialcraft_engine::core::Value::Function(Box::new(function))}));
         run(&mut s, "graph.node.base", json!({"id": noise, "seed": 7}));
         let output = NodeId(run(&mut s, "graph.node.add", json!({"def": "output", "connectFrom": {"node": noise}}))["id"].as_u64().unwrap());
         run(&mut s, "graph.select", json!({"ids": [noise]}));
@@ -32,9 +36,10 @@ fn grouping_noise_preserves_pixels_seed_and_undo() {
         run(&mut s, "edit.redo", json!({}));
         assert_eq!(s.pkg.graphs, grouped_graphs);
         assert_eq!(s.cook().image(output, 0).unwrap().data, before.data);
-        let bytes = formats::save_package(&s.pkg).unwrap();
-        let mut reopened = Session::new(formats::load_package(&bytes).unwrap());
+        let bytes = formats::sbs::write_sbs(&s.pkg).unwrap();
+        let mut reopened = Session::new(formats::sbs::read_sbs(&bytes, "seed.sbs", &|_| None).unwrap().pkg);
         reopened.preview_size = None;
-        assert_eq!(reopened.cook().image(output, 0).unwrap().data, before.data);
+        let reopened_output = reopened.graph().unwrap().nodes.iter().find(|node| node.def == "output").unwrap().id;
+        assert_eq!(reopened.cook().image(reopened_output, 0).unwrap().data, before.data);
     }
 }

@@ -1,4 +1,4 @@
-//! Cook benchmarks (run with `--ignored --nocapture` in release).
+//! Cook benchmarks (run with `--ignored --nocapture` in release)
 use std::time::Instant;
 
 use materialcraft_engine::{Session, execute, sample_session};
@@ -8,14 +8,14 @@ fn run(s: &mut Session, id: &str, p: Value) -> Value {
     execute(s, id, &p).unwrap_or_else(|e| panic!("{id}: {e}"))
 }
 
-/// The `rusty_metal` template plus an exposed input `level` read by one unconnected `uniform`.
+/// The `atomics` template plus an exposed input `level` read by one unconnected `uniform`
 fn heavy(size: u64) -> (Session, u64) {
     let mut s = sample_session();
-    run(&mut s, "file.new", json!({"template": "rusty_metal", "size": size}));
+    run(&mut s, "file.new", json!({"template": "atomics", "size": size}));
     s.preview_size = None;
-    let u = run(&mut s, "graph.node.add", json!({"def": "uniform", "params": {"mode": 1}}))["id"].as_u64().unwrap();
+    let u = run(&mut s, "graph.node.add", json!({"def": "uniform", "params": {"color_mode": false}}))["id"].as_u64().unwrap();
     run(&mut s, "graph.exposed.add", json!({"id": "level", "default": {"t": "float", "v": 0.25}}));
-    let f = json!({"nodes": [{"id": 1, "op": "get_var", "value": {"t": "text", "v": "level"}}], "output": 1});
+    let f = json!({"nodes": [{"id": 1, "op": "get_float1", "value": {"t": "text", "v": "level"}}], "output": 1});
     run(&mut s, "graph.node.function", json!({"id": u, "param": "color", "function": f}));
     (s, u)
 }
@@ -48,7 +48,7 @@ fn bench_param_edit() {
     for size in [1024, 2048] {
         let (mut s, u) = heavy(size);
         let (cold, ..) = timed(&mut s);
-        run(&mut s, "graph.node.param", json!({"id": u, "param": "mode", "value": 0}));
+        run(&mut s, "graph.node.param", json!({"id": u, "param": "color_mode", "value": true}));
         let (edit, recooked, total) = timed(&mut s);
         println!("{size}, {cold:.1}, {edit:.1}, {recooked}, {total}");
     }

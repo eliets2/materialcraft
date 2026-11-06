@@ -27,7 +27,7 @@ mod cook_tests {
         let ctx = egui::Context::default();
 
         start(&mut app, 0.0); // cook of version A runs in the background
-        let added = execute(&mut app.session, "graph.node.add", &json!({"def": "clouds_1", "at": [0, 0]})).unwrap();
+        let added = execute(&mut app.session, "graph.node.add", &json!({"def": "uniform", "at": [0, 0]})).unwrap();
         let id = materialcraft_engine::core::NodeId(added["id"].as_u64().unwrap());
         assert!(app.session.dirty);
         app.session.cook_if_dirty(); // version B cooked synchronously, dirty cleared
@@ -43,7 +43,7 @@ mod worker_failure_tests {
     use crate::MaterialCraftApp;
     use crate::cook::{drive, guard};
     use crate::state::UiState;
-    use materialcraft_engine::eval::Cooked;
+    use materialcraft_engine::PreviewCook;
     use materialcraft_engine::sample_session;
 
     fn app() -> MaterialCraftApp {
@@ -65,7 +65,7 @@ mod worker_failure_tests {
     fn a_panicked_cook_worker_reports_errors_on_every_node() {
         let mut app = app();
         assert!(app.session.cook_failures().0.is_empty());
-        let (tx, rx) = std::sync::mpsc::channel::<Result<Cooked, String>>();
+        let (tx, rx) = std::sync::mpsc::channel::<Result<PreviewCook, String>>();
         app.cooker.rx = Some(rx);
         app.cooker.epoch = app.session.cook_epoch;
         tx.send(Err("boom".into())).unwrap();
@@ -81,7 +81,7 @@ mod worker_failure_tests {
     #[test]
     fn a_dead_cook_worker_is_reported_not_silent() {
         let mut app = app();
-        let (tx, rx) = std::sync::mpsc::channel::<Result<Cooked, String>>();
+        let (tx, rx) = std::sync::mpsc::channel::<Result<PreviewCook, String>>();
         app.cooker.rx = Some(rx);
         app.cooker.epoch = app.session.cook_epoch;
         drop(tx);

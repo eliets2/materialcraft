@@ -9,4 +9,9 @@
 pub mod ibl;
 pub mod preview;
 
-pub use preview::{Displacement, Lighting, Maps, Relief, Scene, Settings, VIEW_TRIANGLES, builtin_mesh, pan, render, render_cancellable};
+mod displacement;
+mod relief;
+pub use displacement::Displacement;
+pub use relief::Relief;
+
+pub use preview::{Lighting, Maps, Scene, Settings, VIEW_TRIANGLES, builtin_mesh, pan, render, render_cancellable};

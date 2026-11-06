@@ -14,7 +14,7 @@ fn generated_normal_conventions_produce_the_same_surface_when_matched() {
     let gl = height_to_normal(&height, 8.0, false, false, false);
     let dx = height_to_normal(&height, 8.0, true, false, false);
     let normal_node = materialcraft_engine::nodes::find("normal").unwrap();
-    assert_eq!(normal_node.param("format").unwrap().default.as_i32(), Some(0));
+    assert_eq!(normal_node.param("opengl").unwrap().default.as_bool(), Some(true));
     let maps = |normal| Maps { normal: Some(normal), base_color: Some(Image::filled(4, 4, Kind::Color, [0.5, 0.5, 0.5, 1.0])), ..Maps::default() };
     let (scene, light) = (Scene::builtin("sphere"), Lighting::new("studio"));
     let settings = Settings::default();

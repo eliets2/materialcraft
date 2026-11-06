@@ -37,7 +37,7 @@ mod import_tests {
         std::fs::write(&path, png).unwrap();
         let mut app = MaterialCraftApp::headless(materialcraft_engine::sample_session(), UiState::default());
         let base = app.session.history().len();
-        crate::graph_view::import_bitmap_file(&mut app, &path.display().to_string());
+        crate::graph::import_bitmap_file(&mut app, &path.display().to_string());
         std::fs::remove_file(&path).ok();
         assert_eq!(app.session.history().len(), base + 1, "history: {:?}", app.session.history());
         assert_eq!(app.session.history().last().map(String::as_str), Some("Import bitmap"));

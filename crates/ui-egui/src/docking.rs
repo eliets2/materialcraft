@@ -318,7 +318,7 @@ impl DockContent<Panel> for Panels<'_> {
     fn body(&mut self, ui: &mut Ui, panel: &Panel) {
         let app = &mut *self.app;
         match panel {
-            Panel::Graph => crate::graph_view::show(app, ui),
+            Panel::Graph => crate::graph::show(app, ui),
             Panel::View3d => crate::view3d::show(app, ui),
             Panel::View2d => crate::view2d::show(app, ui),
             _ => {

@@ -11,8 +11,7 @@ The product name is always written **MaterialCraft** (`{Function}Craft` in Pasca
 siblings PhotoCraft, VectorCraft, FilmCraft, LightCraft, PdfCraft, EffectCraft, DesignCraft,
 TextureCraft) in user-facing text: UI, window titles, About, installers, release names, docs prose.
 Machine names stay lowercase: crates (`materialcraft-*`), binaries, file names, ids
-(`ai.storyteller.materialcraft`). The main project format is SBS (`.sbs`); the older native
-package extension `.mcraft` is still read and written.
+(`ai.storyteller.materialcraft`). The project format is SBS (`.sbs`). Legacy package compatibility is not required.
 
 Standards and learnings shared across the crafting apps live in `../craftrules` (checked out next
 to this repo, or `storytold/craftrules`). Read its `AGENTS.md` at the start of a session, follow its
@@ -41,8 +40,8 @@ file first, then `docs/`.
 ```text
 crates/
   core image geom            L0 document model (package, graphs, nodes, values, function graphs); float images; meshes, BVH, camera
-  nodes                      L1 the node library: definitions + CPU cooks (atomic nodes, noises, patterns, filters, PBR utilities, function evaluator)
-  eval formats               L2 graph cooking (topological order, sizes, content-addressed cache, sub-graphs); .sbs and .mcraft packages, bitmaps, texture export
+  nodes                      L1 the node library: native primitive definitions + CPU cooks, function evaluator and pattern graphs
+  eval formats               L2 graph cooking (topological order, sizes, content-addressed cache, sub-graphs); native .sbs packages, bitmaps, texture export
   engine render              L3 Session + command registry (every action is a command), inspect, samples; the 3D preview renderer (CPU PBR + IBL)
   automation                 L4 MCP server + headless JSON-lines RPC + bridge to the running app
   ui-egui                    L5 egui shell (thin: every edit goes through engine commands)
@@ -98,7 +97,7 @@ and simplex gradient noise, Worley/cellular noise, fractal sums, Gaussian and bo
 Felzenszwalb–Huttenlocher distance transforms, Sobel/central-difference normals, reoriented normal
 mapping, HSL, levels, monotone cubic curves, W3C blend modes, GGX/Smith/Schlick PBR, split-sum IBL,
 ACES fitted tone mapping). Never copy proprietary code, shaders, node implementations or presets.
-SBS packages are the main project format (issue #49): `crates/formats/src/sbs.rs` reads and writes
+SBS packages are the main project format (issue #49): `crates/formats/src/sbs/` reads and writes
 them with MaterialCraft's own code, written from the format's public documentation and sample
 files, never from another implementation. Always describe MaterialCraft as a clean-room
 implementation, in code, docs and commits.
