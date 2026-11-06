@@ -12,26 +12,16 @@ pub struct MaterialExportParams {
     pub path: String,
     /// Graph index or full SBS path; defaults to the open graph.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub graph: Option<Value>,
+    pub graph: Option<u32>,
+    /// Square size in pixels, rounded to a power of two from 16 to 8192 (default: the graph's size)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size: Option<u32>,
+    /// Exposed input values to cook with and embed, by input id (see `session_inspect`)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub values: Option<Value>,
+    /// Image files to read into the graph's image inputs, by input id. Paths are relative to the write
+    /// root's read rules; an id must name an image input of the graph
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inputs: Option<Value>,
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use serde_json::json;
-
-    #[test]
-    fn material_publication_rejects_bake_options() {
-        for (option, value) in [("size", json!(256)), ("size", json!(null)), ("values", json!({})), ("inputs", json!({})), ("preset", json!("Worn"))] {
-            let mut request = json!({"path":"material"});
-            request[option] = value;
-
-            let error = serde_json::from_value::<MaterialExportParams>(request).unwrap_err();
-
-            assert!(error.to_string().contains(&format!("unknown field `{option}`")));
-        }
-
-        let params = serde_json::from_value::<MaterialExportParams>(json!({"path":"material", "graph":"Materials/Oak"})).unwrap();
-        assert_eq!(params.graph, Some(json!("Materials/Oak")));
-    }
 }

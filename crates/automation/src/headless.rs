@@ -256,12 +256,12 @@ impl Headless {
             Filesystem::TrustedLocal => {}
         }
 
-        let gi = material_cmds::publish_graph(&self.session, p)?;
-        let bytes = if self.trusted() {
-            material_cmds::material_bytes(&self.session, gi)?
-        } else {
-            material_cmds::material_bytes_with_resource_limit(&self.session, gi, MAX_EXPORTED_MATERIAL_BYTES)?
-        };
+        let (gi, mut options) = material_cmds::material_request(&self.session, "material.export", p)?;
+        material_cmds::load_request_inputs("material.export", |f| self.read(f).map_err(|e| e.to_string()), &self.session, gi, p, &mut options)?;
+        let bytes = material_cmds::material_bytes(&self.session, gi, &options)?;
+        if !self.trusted() && bytes.len() as u64 > MAX_EXPORTED_MATERIAL_BYTES {
+            return Err(bad(format!("the material is {} bytes (limit {MAX_EXPORTED_MATERIAL_BYTES}); reduce source asset sizes", bytes.len())));
+        }
         if bytes.len() as u64 > MAX_EXPORTED_MATERIAL_BYTES {
             return Err(bad(format!("the material is {} bytes (limit {MAX_EXPORTED_MATERIAL_BYTES}); reduce source asset sizes", bytes.len())));
         }

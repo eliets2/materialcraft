@@ -1,3 +1,14 @@
+#[cfg(any(test, not(target_arch = "wasm32")))]
+use std::collections::BTreeMap;
+
+#[cfg(any(test, not(target_arch = "wasm32")))]
+use materialcraft_core::Value;
+use materialcraft_formats::material::srgb_usage;
+#[cfg(any(test, not(target_arch = "wasm32")))]
+use materialcraft_formats::{Depth, encode};
+
+#[cfg(not(target_arch = "wasm32"))]
+use crate::commands::u64p;
 use crate::commands::{CommandSpec, bad, has_graph, strp};
 use crate::{Result, Session, cmd};
 use materialcraft_core::Graph;
@@ -72,12 +83,97 @@ pub fn image_inputs(g: &Graph) -> Vec<ImageInput> {
     out
 }
 
+#[cfg(any(test, not(target_arch = "wasm32")))]
+#[derive(Clone, Default)]
+pub struct MaterialOptions {
+    pub size: Option<u32>,
+    pub values: BTreeMap<String, Value>,
+    pub inputs: BTreeMap<String, craft_texture::Image>,
+}
+
+/// `values` as typed exposed input values of graph `g`
+#[cfg(any(test, not(target_arch = "wasm32")))]
+fn values_param(cmd: &str, g: &Graph, p: &J) -> Result<BTreeMap<String, Value>> {
+    let Some(obj) = p.get("values").and_then(J::as_object) else { return Ok(BTreeMap::new()) };
+    obj.iter()
+        .map(|(id, v)| {
+            let e = g.exposed.iter().find(|e| e.id == *id).ok_or_else(|| bad(cmd, format!("no input `{id}`")))?;
+            let val = e.default.coerce_json(v).ok_or_else(|| bad(cmd, format!("`{id}` takes a {}", e.default.type_name())))?;
+            Ok((id.clone(), val))
+        })
+        .collect()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn graph_param(s: &Session, p: &J) -> Result<usize> {
+    let gi = u64p(p, "graph").map_or(s.graph, |g| g as usize);
+    s.pkg.graph(gi)?;
+    Ok(gi)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn material_request(s: &Session, cmd: &str, p: &J) -> Result<(usize, MaterialOptions)> {
+    let gi = graph_param(s, p)?;
+    let o = MaterialOptions { size: u64p(p, "size").map(|v| v.min(8192) as u32), values: values_param(cmd, s.pkg.graph(gi)?, p)?, ..Default::default() };
+    Ok((gi, o))
+}
+
+/// Decoded bytes (four f32 channels per pixel) that all `inputs` of one request may hold together:
+/// two 8192 px colour inputs. A request's peak stays near 3 GiB: this budget plus the one image being decoded.
+#[cfg(not(target_arch = "wasm32"))]
+pub const MAX_INPUT_DECODED_BYTES: u64 = 2 << 30;
+
+/// Reads the `inputs` map (input id to image path) of an export request into `inputs`. Ids must name
+/// an image input of graph `g`, and the decoded images must fit `MAX_INPUT_DECODED_BYTES` together.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn load_inputs(cmd: &str, read: impl Fn(&str) -> std::result::Result<Vec<u8>, String>, g: &Graph, p: &J, inputs: &mut BTreeMap<String, Image>) -> Result<()> {
+    load_inputs_within(cmd, read, g, p, inputs, MAX_INPUT_DECODED_BYTES)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn load_inputs_within(
+    cmd: &str,
+    read: impl Fn(&str) -> std::result::Result<Vec<u8>, String>,
+    g: &Graph,
+    p: &J,
+    inputs: &mut BTreeMap<String, Image>,
+    budget: u64,
+) -> Result<()> {
+    let entries = match p.get("inputs") {
+        None | Some(J::Null) => return Ok(()),
+        Some(v) => v.as_object().ok_or_else(|| bad(cmd, "`inputs` maps input ids to image paths"))?,
+    };
+    let declared = image_inputs(g);
+    let mut total = 0u64;
+    for (id, file) in entries {
+        if !declared.iter().any(|i| i.identifier == *id) {
+            let names: Vec<&str> = declared.iter().map(|i| i.identifier.as_str()).collect();
+            return Err(bad(cmd, format!("no image input `{id}` in this graph (image inputs: {})", names.join(", "))));
+        }
+        let file = file.as_str().ok_or_else(|| bad(cmd, format!("inputs.{id} must be an image path")))?;
+        let bytes = read(file).map_err(|e| bad(cmd, e))?;
+        let image = materialcraft_formats::decode(&bytes, !srgb_usage(id))?;
+        let decoded = image.w as u64 * image.h as u64 * 16;
+        total = total.checked_add(decoded).filter(|t| *t <= budget).ok_or_else(|| bad(cmd, format!("the inputs decode to more than {budget} bytes in total")))?;
+        inputs.insert(id.clone(), image);
+    }
+    Ok(())
+}
+
+/// `load_inputs` for a request that cooks graph `gi` of session `s`.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn load_request_inputs(cmd: &str, read: impl Fn(&str) -> std::result::Result<Vec<u8>, String>, s: &Session, gi: usize, p: &J, o: &mut MaterialOptions) -> Result<()> {
+    load_inputs(cmd, read, s.pkg.graph(gi)?, p, &mut o.inputs)
+}
 #[cfg(not(target_arch = "wasm32"))]
 fn export_material(s: &mut Session, p: &J) -> Result<J> {
     const CMD: &str = "file.exportMaterial";
     let path = strp(p, "path").ok_or_else(|| bad(CMD, "`path` is required"))?;
     let path = if path.to_ascii_lowercase().ends_with(&format!(".{MATERIAL_EXT}")) { path.to_string() } else { format!("{path}.{MATERIAL_EXT}") };
-    let bytes = material_bytes(s, publish_graph(s, p)?)?;
+    let gi = publish_graph(s, p)?;
+    let (gi, mut o) = material_request(s, CMD, p)?;
+    load_request_inputs(CMD, |f| std::fs::read(f).map_err(|e| format!("{f}: {e}")), s, gi, p, &mut o)?;
+    let bytes = material_bytes(s, gi, &o)?;
     materialcraft_formats::write_atomic(std::path::Path::new(&path), &bytes)?;
     s.log(format!("Exported material {path}"));
     Ok(json!({"path": path, "bytes": bytes.len()}))
@@ -170,5 +266,147 @@ fn unbind(s: &mut Session, p: &J) -> Result<J> {
 }
 
 #[cfg(test)]
+#[cfg(test)]
 #[path = "material_cmds.test.rs"]
 mod tests;
+
+#[cfg(test)]
+mod bake_tests {
+    use super::*;
+    use materialcraft_formats::material::read_material;
+
+    #[test]
+    fn exports_maps_inputs_and_values() {
+        let mut s = crate::sample_session();
+        crate::execute(&mut s, "graph.exposed.add", &json!({"id": "wear", "default": 0.5})).unwrap();
+        crate::execute(&mut s, "graph.exposed.add", &json!({"id": "label", "default": {"t": "text", "v": "x"}})).unwrap();
+        let values = values_param("t", s.graph().unwrap(), &json!({"values": {"wear": 0.9}})).unwrap();
+        let bytes = material_bytes(&s, s.graph, &MaterialOptions { size: Some(32), values, ..Default::default() }).unwrap();
+        let (m, source) = read_material(&bytes).unwrap();
+        assert_eq!(m.size, [32, 32]);
+        assert!(m.maps.iter().any(|entry| entry.usage == "height" && entry.color_space == "linear"));
+        let ids: Vec<&str> = m.parameters.iter().map(|p| p.param.id.as_str()).collect();
+        assert_eq!(ids, ["wear"], "text inputs are not portable");
+        assert_eq!(m.parameters[0].value, Value::Float(0.9), "the manifest carries the cooked value");
+        assert_eq!(
+            materialcraft_formats::sbs::read_sbs(&source, "source.sbs", &|_| None).unwrap().pkg.graphs[s.graph].input_value("wear"),
+            Some(&Value::Float(0.9))
+        );
+        // The source package opens again, on the material's graph, with no file to save over
+        crate::file_cmds::open_bytes(&mut s, &bytes, Some("x.mcmat".into())).unwrap();
+        assert_eq!(s.graph().unwrap().name, m.graph);
+        assert!(s.path.is_none());
+    }
+
+    #[test]
+    fn load_inputs_rejects_unknown_ids_and_repeated_paths_over_budget() {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let mut s = crate::sample_session();
+            crate::execute(&mut s, "graph.node.add", &json!({"def": "input_grayscale", "params": {"identifier": "curvature"}})).unwrap();
+            crate::execute(&mut s, "graph.node.add", &json!({"def": "input_grayscale", "params": {"identifier": "roughness"}})).unwrap();
+            let g = s.graph().unwrap();
+            let png = encode(&Image::filled(4, 4, materialcraft_image::Kind::Gray, [0.7; 4]), "png", Depth::U16, false).unwrap();
+            let read = |_: &str| Ok::<Vec<u8>, String>(png.clone());
+            let one_image = 4 * 4 * 16;
+
+            let mut inputs = BTreeMap::new();
+            assert!(load_inputs_within("t", read, g, &json!({"inputs": {"nope": "a.png"}}), &mut inputs, one_image).is_err());
+            assert!(inputs.is_empty());
+
+            // Repeated paths under distinct ids each retain a decoded copy, so the budget counts them
+            let mut inputs = BTreeMap::new();
+            let same_path = json!({"inputs": {"curvature": "a.png", "roughness": "a.png"}});
+            assert!(load_inputs_within("t", read, g, &same_path, &mut inputs, one_image).is_err());
+
+            let mut inputs = BTreeMap::new();
+            assert!(load_inputs_within("t", read, g, &json!({"inputs": {"curvature": "a.png"}}), &mut inputs, one_image).is_ok());
+            assert_eq!(inputs.len(), 1);
+            assert!(load_inputs_within("t", read, g, &json!({"inputs": "a.png"}), &mut BTreeMap::new(), one_image).is_err());
+        }
+    }
+
+    #[test]
+    fn binds_preview_images_to_input_nodes() {
+        let mut s = crate::sample_session();
+        crate::execute(&mut s, "graph.node.add", &json!({"def": "input_grayscale", "params": {"identifier": "curvature"}})).unwrap();
+        let png = encode(&Image::filled(4, 4, craft_texture::Kind::Gray, [0.7; 4]), "png", Depth::U16, false).unwrap();
+        let res = crate::file_cmds::add_resource(&mut s, "curv.png", png, None).unwrap();
+
+        assert!(crate::execute(&mut s, "graph.input.bind", &json!({"identifier": "nope", "resource": res})).is_err());
+
+        crate::execute(&mut s, "graph.input.bind", &json!({"identifier": "curvature", "resource": res, "linear": true})).unwrap();
+
+        assert_eq!(s.graph().unwrap().input_images.get("curvature"), Some(&res));
+
+        let bytes = materialcraft_formats::sbs::write_sbs(&s.pkg).unwrap();
+        let reopened = materialcraft_formats::sbs::read_sbs(&bytes, "input.sbs", &|_| None).unwrap().pkg;
+
+        assert_eq!(reopened.graphs[s.graph].input_images.get("curvature"), Some(&res));
+        assert!(reopened.graphs[s.graph].input_images_linear.contains("curvature"));
+
+        let bytes = material_bytes(&s, s.graph, &MaterialOptions { size: Some(16), ..Default::default() }).unwrap();
+        let (m, _) = read_material(&bytes).unwrap();
+
+        assert!(m.inputs.iter().any(|i| i.identifier == "curvature" && i.kind == "gray"));
+        assert_eq!(crate::execute(&mut s, "graph.input.unbind", &json!({"identifier": "curvature"})).unwrap(), J::Bool(true));
+        assert!(s.graph().unwrap().input_images.is_empty());
+        assert!(s.graph().unwrap().input_images_linear.is_empty());
+    }
+
+    #[test]
+    fn rejects_unknown_values() {
+        let s = crate::sample_session();
+        let g = s.graph().unwrap();
+        assert!(values_param("t", g, &json!({"values": {"no_such_input": 1}})).is_err());
+        assert!(values_param("t", g, &json!({})).unwrap().is_empty());
+    }
+
+    #[test]
+    fn export_material_decodes_data_inputs_as_linear() {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            use materialcraft_formats::decode;
+
+            let mut s = crate::sample_session();
+            let input =
+                crate::execute(&mut s, "graph.node.add", &json!({"def": "input_color", "params": {"identifier": "normal"}})).unwrap()["id"].as_u64().unwrap();
+            let output =
+                crate::execute(&mut s, "graph.node.add", &json!({"def": "output", "params": {"usage": ComponentUsage::index("normal")}})).unwrap()["id"]
+                    .as_u64()
+                    .unwrap();
+            crate::execute(&mut s, "graph.connect", &json!({"from": input, "to": output})).unwrap();
+
+            let png = encode(&Image::filled(16, 16, craft_texture::Kind::Color, [128.0 / 255.0; 4]), "png", Depth::U16, false).unwrap();
+            let dir = std::env::temp_dir().join(format!("materialcraft-linear-input-{}", std::process::id()));
+            std::fs::create_dir_all(&dir).unwrap();
+            let file = dir.join("normal.png");
+            std::fs::write(&file, &png).unwrap();
+            let input_path = file.to_str().unwrap().to_string();
+            let output_path = dir.join("out.mcmat").to_str().unwrap().to_string();
+
+            let result = crate::execute(&mut s, "file.exportMaterial", &json!({"path": output_path, "size": 16, "inputs": {"normal": input_path}}));
+
+            assert!(result.is_ok());
+
+            let bytes = std::fs::read(&output_path).unwrap();
+            let _ = std::fs::remove_dir_all(&dir);
+
+            // The uncompressed archive exposes the normal map after its local file header
+            let name = b"maps/normal.png";
+            let pos = bytes.windows(name.len()).position(|w| w == name).unwrap();
+            let header = pos - 30;
+
+            assert_eq!(&bytes[header..header + 4], b"PK\x03\x04");
+
+            let name_len = u16::from_le_bytes([bytes[header + 26], bytes[header + 27]]) as usize;
+            let extra_len = u16::from_le_bytes([bytes[header + 28], bytes[header + 29]]) as usize;
+            let compressed = u32::from_le_bytes([bytes[header + 18], bytes[header + 19], bytes[header + 20], bytes[header + 21]]) as usize;
+            let start = header + 30 + name_len + extra_len;
+            let map = &bytes[start..start + compressed];
+            let decoded = decode(map, true).unwrap();
+
+            assert!((decoded.get(0, 0, false)[0] - 128.0 / 255.0).abs() < 1e-3, "data inputs must be decoded as linear");
+        }
+    }
+}
