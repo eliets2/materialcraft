@@ -1,53 +1,26 @@
-//! Ask before unsaved work is thrown away.
+//! Ask before unsaved work is thrown away
 //!
 //! Opening a package, closing all, making an empty package, dropping a file on the window and
 //! closing the window or quitting all replace or end the open package. When it has unsaved
 //! changes, those paths ask first (Save / Discard / Cancel). Only these UI paths ask: engine
-//! commands run by the control channel, MCP, the CLI and scripts never open a dialog.
+//! commands run by the control channel, MCP, the CLI and scripts never open a dialog
 //!
 //! The decision is a pure state machine ([`request`], [`answer`], [`after_save`]) over the
 //! serde [`Guarded`] action held in `Windows::unsaved`, so tests and the control channel
-//! (`ui.inspect`) can see it. The glue below runs the held action once it is allowed.
+//! (`ui.inspect`) can see it. The glue below runs the held action once it is allowed
 
 use egui::{Align2, Context, RichText, Window};
-use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::MaterialCraftApp;
 use crate::i18n::tr;
 
-/// An action that would throw the open package's unsaved work away.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "camelCase")]
-pub enum Guarded {
-    /// A menu item: `ui.closeAll` or `file.newPackage`.
-    Menu { id: String },
-    /// Open the package at `path` (desktop).
-    OpenPath { path: String },
-    /// Open the package whose bytes wait in `MaterialCraftApp::pending_load` (browser).
-    LoadBytes { name: String },
-    /// Close the window.
-    Quit,
-}
-
-/// What the user picked in the dialog.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Choice {
-    Save,
-    Discard,
-    Cancel,
-}
-
-/// What to do after an answer.
-#[derive(Clone, Debug, PartialEq)]
-pub enum Step {
-    /// Run the action now.
-    Run(Guarded),
-    /// Save first, then run the action if the package is no longer modified.
-    Save(Guarded),
-    /// Do nothing.
-    Stop,
-}
+mod choice;
+mod guarded;
+mod step;
+pub use choice::Choice;
+pub use guarded::Guarded;
+pub use step::Step;
 
 /// Does throwing this session away lose work?
 pub fn needs_confirmation(session: &materialcraft_engine::Session) -> bool {
@@ -55,7 +28,7 @@ pub fn needs_confirmation(session: &materialcraft_engine::Session) -> bool {
 }
 
 /// Ask to run `action`. Returns it when it can run now; otherwise holds it in `pending` for the
-/// dialog (an action already waiting is kept) and returns `None`.
+/// dialog (an action already waiting is kept) and returns `None`
 pub fn request(pending: &mut Option<Guarded>, modified: bool, action: Guarded) -> Option<Guarded> {
     if pending.is_some() {
         return None;
@@ -63,13 +36,11 @@ pub fn request(pending: &mut Option<Guarded>, modified: bool, action: Guarded) -
     if !modified {
         return Some(action);
     }
-    if pending.is_none() {
-        *pending = Some(action);
-    }
+    *pending = Some(action);
     None
 }
 
-/// Apply the user's answer to the held action.
+/// Apply the user's answer to the held action
 pub fn answer(pending: &mut Option<Guarded>, choice: Choice) -> Step {
     match (pending.take(), choice) {
         (Some(a), Choice::Discard) => Step::Run(a),
@@ -78,7 +49,7 @@ pub fn answer(pending: &mut Option<Guarded>, choice: Choice) -> Step {
     }
 }
 
-/// After a save attempt, the action may run only when the package really was saved.
+/// After a save attempt, the action may run only when the package really was saved
 pub fn after_save(still_modified: bool, action: Guarded) -> Option<Guarded> {
     (!still_modified).then_some(action)
 }
@@ -88,7 +59,7 @@ pub fn holds_close(modified: bool, confirmed: bool) -> bool {
     modified && !confirmed
 }
 
-/// Run `action`, asking first when the package has unsaved changes.
+/// Run `action`, asking first when the package has unsaved changes
 pub fn guard(app: &mut MaterialCraftApp, action: Guarded) {
     let modified = needs_confirmation(&app.session);
     if let Some(a) = request(&mut app.ui.windows.unsaved, modified, action) {
@@ -96,7 +67,7 @@ pub fn guard(app: &mut MaterialCraftApp, action: Guarded) {
     }
 }
 
-/// Run an allowed action.
+/// Run an allowed action
 fn perform(app: &mut MaterialCraftApp, action: Guarded) {
     match action {
         Guarded::Menu { .. } => {
@@ -115,7 +86,7 @@ fn perform(app: &mut MaterialCraftApp, action: Guarded) {
     }
 }
 
-/// Per frame: hold back a window close while there is unsaved work, and finish a confirmed quit.
+/// Per frame: hold back a window close while there is unsaved work, and finish a confirmed quit
 pub fn handle_close(app: &mut MaterialCraftApp, ctx: &Context) {
     if ctx.input(|i| i.viewport().close_requested()) && holds_close(needs_confirmation(&app.session), app.quit_confirmed) {
         ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
@@ -126,7 +97,7 @@ pub fn handle_close(app: &mut MaterialCraftApp, ctx: &Context) {
     }
 }
 
-/// The Save / Discard / Cancel dialog, while an action is held.
+/// The Save / Discard / Cancel dialog, while an action is held
 pub fn show(app: &mut MaterialCraftApp, ctx: &Context) {
     if app.ui.windows.unsaved.is_none() {
         return;

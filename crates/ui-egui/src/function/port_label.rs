@@ -1,0 +1,26 @@
+pub(super) fn port_label(identifier: &str) -> &str {
+    match identifier {
+        "a" => "A",
+        "b" => "B",
+        "x" => "Factor",
+        "scalar" => "Scalar",
+        "rho" => "Radius",
+        "theta" => "Angle",
+        "componentsin" => "Components",
+        "componentslast" => "Last Component",
+        "vector" => "Vector",
+        "value" => "Value",
+        "pos" => "Position",
+        "condition" => "Condition",
+        "ifpath" => "If",
+        "elsepath" => "Else",
+        "seqin" => "First",
+        "seqlast" => "Last",
+        "init" => "Initial Value",
+        "cond" => "Exit Condition",
+        "loop" => "Loop",
+        "input" => "Input",
+        "output" => "Output",
+        _ => identifier,
+    }
+}

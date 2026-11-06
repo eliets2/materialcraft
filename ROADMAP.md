@@ -1,46 +1,20 @@
 # MaterialCraft roadmap
 
-> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-02 · **Change:** minor (≈ 67%: portable materials for TextureCraft) · **Target:** the professional node-based material workflow
+**Current focus (2026-11-05):** native primitive editing, evaluation and SBS save/load.
 
-**Stage:** alpha (in active development). MaterialCraft aims for full parity with the professional
-node-based procedural material workflow, with better performance, every feature drivable by agents
-(MCP, CLI, control channel), and builds for Windows, macOS, Linux, FreeBSD and the web.
+The old Rust procedural library has been removed. The main catalog has 30 entries: 26 native
+primitives and four graph input/output items. Functions have 85 operations; pattern graphs have
+Quadrant, Switch, Iterate and Dot. See [the primitive workflow](docs/atomic-workflow.md) for usage and limits.
 
-## Headline numbers
+Earlier percentage estimates and node counts are superseded by this change. Reference-app
+rendering parity and arbitrary SBS round trips have not been established.
 
-- **Parity: ≈ 67%** of a material artist's daily workflow works end to end
-  ([docs/target-app-parity.md](docs/target-app-parity.md)).
-- **Remaining: ≈ 83 Opus 5.5 agent hours** ([docs/roadmap.md](docs/roadmap.md)).
-- **Nodes:** 227 (all tileable), cooked on every CPU core through a content-addressed cache; the
-  brick wall sample cooks in about 40 ms at preview size.
+## Next steps
 
-## By area
-
-| Area | Weight | Done |
-|---|---:|---:|
-| Graph editing | 15 | 75% |
-| Atomic nodes | 12 | 95% |
-| Node library | 20 | 45% |
-| Function graphs | 10 | 70% |
-| Graph parameters and instances | 8 | 70% |
-| 2D view | 5 | 80% |
-| 3D view | 10 | 55% |
-| Files | 8 | 70% |
-| UI and UX | 8 | 70% |
-| Platforms | 4 | 50% |
-| **Total** | **100** | **≈ 67%** |
-
-## What's next
-
-1. The rest of the node library: scan processing, more grunges, spline tools, SDF shapes.
-2. A GPU 3D view with tessellation and lights.
-3. Mesh-based generators and bakers.
-4. Function loops and reusable functions.
-5. The first release on every platform.
-
-The ranked work list is [docs/gaps.md](docs/gaps.md); file formats are in
-[docs/file-format-parity.md](docs/file-format-parity.md) and languages in
-[docs/localization-parity.md](docs/localization-parity.md).
+1. Verify the original atomic sample in the reference application
+2. Compare primitive outputs and parameter semantics against reference results
+3. Add SBS graph references with cycle-safe resolution
+4. Build the library from SBS definitions instead of duplicate Rust nodes
 
 ## Progress log
 

@@ -242,15 +242,14 @@ pub fn handle(app: &mut MaterialCraftApp, ctx: &egui::Context, method: &str, p: 
         "command.run" => {
             let Some(id) = p.get("id").and_then(Value::as_str) else { return err("`id` is required") };
             let params = p.get("params").cloned().unwrap_or(Value::Null);
-            // Each request ends its own coalescing run, including failed requests.
-            app.session.end_merge();
-            let r = crate::cook::execute_guarded(&mut app.session, id, &params);
-            app.session.end_merge();
-            match r {
+            match crate::cook::guard("command request", || {
+                materialcraft_engine::commands::execute_request(&mut app.session, id, &params).map_err(|error| error.to_string())
+            }) {
                 Ok(v) => {
                     if id == "view.previewSize" {
                         app.ui.prefs.preview_size = app.session.preview_size.unwrap_or(0);
                     }
+                    app.close_subgraph_after(id);
                     ok(v)
                 }
                 Err(e) => err(e),
@@ -263,11 +262,31 @@ pub fn handle(app: &mut MaterialCraftApp, ctx: &egui::Context, method: &str, p: 
         }
         "ui.inspect" => {
             let rect = |r: egui::Rect| json!([r.min.x, r.min.y, r.width(), r.height()]);
+            let target = crate::graph::editor_target::EditorTarget::resolve(app);
+            let (view, nodes, ports) = (app.graph.view, &app.graph.rects, &app.graph.ports);
             ok(json!({
                 "state": app.ui,
-                "graphView": rect(app.graph.view),
-                "nodes": app.graph.rects.iter().map(|(id, r)| json!({"id": id.0, "rect": rect(*r)})).collect::<Vec<_>>(),
-                "ports": app.graph.ports.iter().map(|h| json!({"node": h.node.0, "port": h.port, "output": h.output, "pos": [h.pos.x, h.pos.y]})).collect::<Vec<_>>(),
+                "graphView": rect(view),
+                "selection": app.session.selection,
+                "inspectedNode": app.graph.inspected_node,
+                "subgraph": match target {
+                    crate::graph::editor_target::EditorTarget::Function => app.function_editor.as_ref()
+                        .map(|editor| json!({"kind": "function", "graph": app.session.graph, "node": editor.node, "target": editor.command_target(), "selection": editor.selection, "inspectedNode": editor.inspected_node})),
+                    crate::graph::editor_target::EditorTarget::Pattern => app.pattern_editor.as_ref()
+                        .map(|editor| json!({"kind": "pattern", "graph": editor.graph, "node": editor.node.0, "selection": editor.selection, "inspectedNode": editor.inspected_node})),
+                    crate::graph::editor_target::EditorTarget::Material => None,
+                },
+                "annotationSelection": app.session.annotation_selection,
+                "frames": app.graph.frames.iter().map(|(id, bounds)| json!({"id": id, "rect": rect(*bounds)})).collect::<Vec<_>>(),
+                "comments": app.graph.comments.iter().map(|(id, bounds)| json!({"id": id, "rect": rect(*bounds)})).collect::<Vec<_>>(),
+                "nodes": nodes.iter().map(|(id, r)| json!({"id": id.0, "rect": rect(*r)})).collect::<Vec<_>>(),
+                "ports": ports.iter().map(|port| json!({
+                    "node": port.node.0,
+                    "port": port.port,
+                    "label": port.label,
+                    "output": port.output,
+                    "pos": [port.pos.x, port.pos.y],
+                })).collect::<Vec<_>>(),
                 "fps": app.fps,
                 "uiMs": app.ui_ms,
                 "cooking": app.cooker.busy(),
