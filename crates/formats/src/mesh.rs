@@ -17,7 +17,7 @@ const MAX_TRIANGLES: usize = 4_000_000;
 const MAX_VERTICES: usize = 4_000_000;
 
 fn check_vertex_bound(current: usize, added: usize) -> Result<()> {
-    if current.checked_add(added).map_or(true, |total| total > MAX_VERTICES) {
+    if current.checked_add(added).is_none_or(|total| total > MAX_VERTICES) {
         return Err(bad("the mesh is too large"));
     }
     Ok(())
@@ -25,10 +25,7 @@ fn check_vertex_bound(current: usize, added: usize) -> Result<()> {
 
 fn is_obj_vertex_line(line: &[u8]) -> bool {
     let mut bytes = line.iter().copied().skip_while(|b| matches!(b, b' ' | b'\t'));
-    match (bytes.next(), bytes.next()) {
-        (Some(b'v'), Some(b' ') | Some(b'\t') | Some(b'\r')) | (Some(b'v'), None) => true,
-        _ => false,
-    }
+    matches!((bytes.next(), bytes.next()), (Some(b'v'), Some(b' ') | Some(b'\t') | Some(b'\r')) | (Some(b'v'), None))
 }
 
 /// Reject an OBJ whose raw vertex definitions exceed the bound before the
