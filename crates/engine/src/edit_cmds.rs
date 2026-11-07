@@ -211,6 +211,7 @@ fn delete_relink(s: &mut Session, p: &J) -> Result<J> {
     let ids = ids_param(s, "edit.deleteRelink", p)?;
     s.edit("Delete and relink", |s| {
         let ports_by_id: Vec<Vec<String>> = ids.iter().map(|id| s.input_ports(*id)).collect();
+        let id_set: std::collections::BTreeSet<NodeId> = ids.iter().cloned().collect();
         let (sources, outs) = {
             let graph = s.graph()?;
             let mut sources: BTreeMap<NodeId, Option<(NodeId, String)>> = BTreeMap::new();
@@ -222,7 +223,7 @@ fn delete_relink(s: &mut Session, p: &J) -> Result<J> {
                 sources.insert(*id, entry);
             }
             let outs: BTreeMap<NodeId, Vec<(NodeId, String)>> =
-                graph.connections.iter().filter(|c| ids.contains(&c.from)).map(|c| (c.from, (c.to, c.to_port.clone()))).fold(
+                graph.connections.iter().filter(|c| id_set.contains(&c.from)).map(|c| (c.from, (c.to, c.to_port.clone()))).fold(
                     BTreeMap::new(),
                     |mut map, (from, to)| {
                         map.entry(from).or_default().push(to);
@@ -231,21 +232,37 @@ fn delete_relink(s: &mut Session, p: &J) -> Result<J> {
                 );
             (sources, outs)
         };
+        // Only deleted nodes feeding a surviving target need a resolved source.
+        let needed: std::collections::BTreeSet<NodeId> =
+            outs.iter().filter(|(_, tos)| tos.iter().any(|(to, _)| !id_set.contains(to))).map(|(from, _)| *from).collect();
         let mut resolved: BTreeMap<NodeId, Option<(NodeId, String)>> = BTreeMap::new();
-        for id in &ids {
-            let mut current = sources.get(id).cloned().flatten();
-            let mut seen: std::collections::BTreeSet<NodeId> = std::collections::BTreeSet::new();
-            while let Some((from, _)) = current {
-                if !ids.contains(&from) {
-                    break;
-                }
-                if !seen.insert(from) {
-                    current = None;
-                    break;
-                }
-                current = sources.get(&from).cloned().flatten();
+        for id in &needed {
+            if resolved.contains_key(id) {
+                continue;
             }
-            resolved.insert(*id, current);
+            let mut path: Vec<NodeId> = Vec::new();
+            let mut seen: std::collections::BTreeSet<NodeId> = std::collections::BTreeSet::new();
+            let mut current = sources.get(id).cloned().flatten();
+            let terminal: Option<(NodeId, String)> = loop {
+                match current {
+                    None => break None,
+                    Some((from, port)) if !id_set.contains(&from) => break Some((from, port)),
+                    Some((from, _)) => {
+                        if let Some(r) = resolved.get(&from) {
+                            break r.clone();
+                        }
+                        if !seen.insert(from) {
+                            break None;
+                        }
+                        path.push(from);
+                        current = sources.get(&from).cloned().flatten();
+                    }
+                }
+            };
+            resolved.insert(*id, terminal.clone());
+            for node in path {
+                resolved.insert(node, terminal.clone());
+            }
         }
         let graph = s.graph_mut()?;
         graph.remove_nodes(&ids);
@@ -254,7 +271,7 @@ fn delete_relink(s: &mut Session, p: &J) -> Result<J> {
         // used as a waypoint in that walk, never as a fan-out itself.
         for from in outs.keys() {
             for (to, to_port) in &outs[from] {
-                if ids.contains(to) {
+                if id_set.contains(to) {
                     continue;
                 }
                 if let Some((source, port)) = resolved.get(from).cloned().flatten() {
@@ -264,7 +281,7 @@ fn delete_relink(s: &mut Session, p: &J) -> Result<J> {
                 }
             }
         }
-        s.selection.retain(|i| !ids.contains(i));
+        s.selection.retain(|i| !id_set.contains(i));
         Ok(json!({"deleted": ids.len()}))
     })
 }
