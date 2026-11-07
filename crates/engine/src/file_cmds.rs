@@ -283,7 +283,7 @@ fn export(s: &mut Session, p: &J) -> Result<J> {
     let files = export_outputs(s, gi, &ext, &pattern, depth, size)?;
     for f in &files {
         let path = std::path::Path::new(dir).join(&f.file);
-        if path.exists() {
+        if std::fs::symlink_metadata(&path).is_ok() {
             return Err(bad(
                 "file.export",
                 format!("export file already exists `{}`: remove or rename the existing file or export to a different directory", path.display()),
@@ -294,7 +294,38 @@ fn export(s: &mut Session, p: &J) -> Result<J> {
     let mut written = Vec::new();
     for f in files {
         let path = std::path::Path::new(dir).join(&f.file);
-        materialcraft_formats::write_atomic(&path, &f.bytes)?;
+        // Write to an exclusively created temporary file in the same directory,
+        // then publish it with a hard link so an existing destination
+        // (including a dangling symlink) is never replaced.
+        let mut attempt = 0;
+        let (temp_path, mut temp_file) = loop {
+            let suffix = if attempt == 0 { String::new() } else { format!(".{attempt}") };
+            let candidate = std::path::Path::new(dir).join(format!(".{}.tmp{suffix}", f.file));
+            match std::fs::OpenOptions::new().write(true).create_new(true).open(&candidate) {
+                Ok(file) => break (candidate, file),
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => attempt += 1,
+                Err(e) => return Err(bad("file.export", format!("{}: {e}", candidate.display()))),
+            }
+        };
+        let write_result = (|| -> std::io::Result<()> {
+            use std::io::Write;
+            temp_file.write_all(&f.bytes)?;
+            temp_file.sync_all()?;
+            drop(temp_file);
+            std::fs::hard_link(&temp_path, &path)?;
+            std::fs::remove_file(&temp_path)?;
+            Ok(())
+        })();
+        if let Err(e) = write_result {
+            let _ = std::fs::remove_file(&temp_path);
+            if e.kind() == std::io::ErrorKind::AlreadyExists {
+                return Err(bad(
+                    "file.export",
+                    format!("export file already exists `{}`: remove or rename the existing file or export to a different directory", path.display()),
+                ));
+            }
+            return Err(bad("file.export", format!("{}: {e}", path.display())));
+        }
         written.push(path.display().to_string());
     }
     s.log(format!("Exported {} files to {dir}", written.len()));

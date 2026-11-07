@@ -110,6 +110,7 @@ fn unique_export_writes_both_maps_with_their_expected_pixels() {
 }
 
 #[test]
+#[cfg(not(target_arch = "wasm32"))]
 fn export_existing_file_error_names_full_target_path() {
     let (mut s, _) = session();
     let dir = TempDir::new("existing-path");
