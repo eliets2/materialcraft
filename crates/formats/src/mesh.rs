@@ -23,22 +23,49 @@ fn check_vertex_bound(current: usize, added: usize) -> Result<()> {
     Ok(())
 }
 
-fn is_obj_vertex_line(line: &[u8]) -> bool {
-    let mut bytes = line.iter().copied().skip_while(|b| matches!(b, b' ' | b'\t'));
-    matches!((bytes.next(), bytes.next()), (Some(b'v'), Some(b' ') | Some(b'\t') | Some(b'\r')) | (Some(b'v'), None))
-}
-
-/// Reject an OBJ whose raw vertex definitions exceed the bound before the
-/// parser allocates storage for them. Unreferenced vertices never reach the
-/// parsed mesh, so counting parsed vertices alone cannot bound this input.
+/// Reject an OBJ whose raw attribute or face definitions exceed the bounds
+/// before the parser allocates storage for them. Unreferenced definitions
+/// never reach the parsed mesh, so counting parsed vertices alone cannot
+/// bound this input. First tokens are matched with `split_whitespace`, the
+/// same Unicode whitespace rules the OBJ parser uses.
 fn check_obj_vertex_bound(bytes: &[u8]) -> Result<()> {
-    let mut count = 0usize;
+    let mut vertices = 0usize;
+    let mut texcoords = 0usize;
+    let mut normals = 0usize;
+    let mut face_corners = 0usize;
     for line in bytes.split(|b| *b == b'\n') {
-        if is_obj_vertex_line(line) {
-            count = count.saturating_add(1);
-            if count > MAX_VERTICES {
-                return Err(bad("the mesh is too large"));
+        let Ok(line) = std::str::from_utf8(line) else { continue };
+        let mut tokens = line.split_whitespace();
+        match tokens.next() {
+            Some("v") => {
+                vertices = vertices.saturating_add(1);
+                if vertices > MAX_VERTICES {
+                    return Err(bad("the mesh is too large"));
+                }
             }
+            Some("vt") => {
+                texcoords = texcoords.saturating_add(1);
+                if texcoords > MAX_VERTICES {
+                    return Err(bad("the mesh is too large"));
+                }
+            }
+            Some("vn") => {
+                normals = normals.saturating_add(1);
+                if normals > MAX_VERTICES {
+                    return Err(bad("the mesh is too large"));
+                }
+            }
+            Some("f") => {
+                // A triangulated face with k corners yields k - 2 triangles, so
+                // a mesh within the triangle limit has at most 3 * MAX_TRIANGLES
+                // corners. Bounding corners also bounds the vertices the parser
+                // expands from distinct face index combinations.
+                face_corners = face_corners.saturating_add(tokens.count());
+                if face_corners > 3 * MAX_TRIANGLES {
+                    return Err(bad("the mesh is too large"));
+                }
+            }
+            _ => {}
         }
     }
     Ok(())
