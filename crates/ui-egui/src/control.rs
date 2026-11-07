@@ -462,7 +462,21 @@ mod tests {
         }
         ids.sort();
         ids.dedup();
-        for known in ["graph.node.add", "graph.node.remove", "graph.node.set", "graph.wire.add", "graph.wire.remove", "graph.clear", "view.previewSize", "session.cook", "cook", "preview", "graph.cook", "view.render", "session.inspect"] {
+        for known in [
+            "graph.node.add",
+            "graph.node.remove",
+            "graph.node.set",
+            "graph.wire.add",
+            "graph.wire.remove",
+            "graph.clear",
+            "view.previewSize",
+            "session.cook",
+            "cook",
+            "preview",
+            "graph.cook",
+            "view.render",
+            "session.inspect",
+        ] {
             if !ids.iter().any(|i| i == known) {
                 ids.push(known.to_string());
             }
@@ -477,7 +491,25 @@ mod tests {
         let sink = json!({"id": node_id, "node": node_id, "nodeId": node_id, "from": node_id, "to": node_id, "fromNode": node_id, "toNode": node_id, "fromPort": 0, "toPort": 0, "port": 0, "def": "uniform", "at": [0, 0], "pos": [0, 0], "size": 64, "previewSize": 64, "graph": invalid, "params": {}, "value": 0});
         let bogus = json!({"id": 999_999, "node": 999_999, "nodeId": 999_999, "from": 999_999, "to": 999_999, "fromNode": 999_999, "toNode": 999_999, "fromPort": 999, "toPort": 999, "port": 999, "def": "no_such_def_xyz", "at": [0, 0], "pos": [0, 0], "size": 0, "previewSize": 0, "value": 0});
         let zero = json!({"id": 0, "node": 0, "from": 0, "to": 0, "fromPort": 0, "toPort": 0, "port": 0, "def": "uniform", "at": [0, 0], "size": 0});
-        let shapes: Vec<Value> = vec![sink.clone(), bogus.clone(), zero.clone(), json!({}), Value::Null, json!([]), json!([0, 0]), json!([999_999]), json!(0), json!(999_999), json!("foo"), json!({"def": 123, "at": [0, 0]}), json!({"def": "uniform", "at": "foo"}), json!({"id": "foo"}), json!({"params": 123}), json!({"size": 0}), json!({"size": -1})];
+        let shapes: Vec<Value> = vec![
+            sink.clone(),
+            bogus.clone(),
+            zero.clone(),
+            json!({}),
+            Value::Null,
+            json!([]),
+            json!([0, 0]),
+            json!([999_999]),
+            json!(0),
+            json!(999_999),
+            json!("foo"),
+            json!({"def": 123, "at": [0, 0]}),
+            json!({"def": "uniform", "at": "foo"}),
+            json!({"id": "foo"}),
+            json!({"params": 123}),
+            json!({"size": 0}),
+            json!({"size": -1}),
+        ];
         for id in &ids {
             for params in &shapes {
                 for graph in [invalid, valid_graph] {
