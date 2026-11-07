@@ -108,3 +108,26 @@ fn unique_export_writes_both_maps_with_their_expected_pixels() {
         assert!((image.get(0, 0, false)[0] - value).abs() < 0.001, "{name}");
     }
 }
+
+#[test]
+fn export_existing_file_error_names_full_target_path() {
+    let (mut s, _) = session();
+    let dir = TempDir::new("existing-path");
+    let sentinel = b"existing file must survive a rejected export";
+    let target = dir.0.join("second.png");
+    std::fs::write(&target, sentinel).unwrap();
+    let result = execute(&mut s, "file.export", &json!({"dir": dir.0, "pattern": "$(identifier)"}));
+    let existing = std::fs::read(&target).unwrap();
+    let files = std::fs::read_dir(&dir.0).unwrap().count();
+    let error = result.err().unwrap().to_string();
+    let target_path = target.display().to_string();
+    assert!(
+        error.contains("file.export") && error.contains(target_path.as_str()),
+        "existing-file error must name the full target path: error={error}, target={target_path}"
+    );
+    assert!(
+        existing == sentinel && files == 1,
+        "export wrote partial outputs before rejecting an existing file: files={files}, sentinel preserved={}",
+        existing == sentinel
+    );
+}
