@@ -228,10 +228,7 @@ fn merge_json(dst: &mut Value, patch: &Value) {
 pub fn handle(app: &mut MaterialCraftApp, ctx: &egui::Context, method: &str, p: &Value) -> Value {
     match crate::cook::guard("control request", || Ok(handle_inner(app, ctx, method, p))) {
         Ok(v) => v,
-        Err(e) => {
-            app.session.dirty = false;
-            err(e)
-        }
+        Err(e) => err(e),
     }
 }
 
@@ -252,9 +249,15 @@ fn handle_inner(app: &mut MaterialCraftApp, ctx: &egui::Context, method: &str, p
         "command.run" => {
             let Some(id) = p.get("id").and_then(Value::as_str) else { return err("`id` is required") };
             let params = p.get("params").cloned().unwrap_or(Value::Null);
-            match crate::cook::guard("command request", || {
+            let was_dirty = app.session.dirty;
+            let result = crate::cook::guard("command request", || {
                 Ok(materialcraft_engine::commands::execute_request(&mut app.session, id, &params).map_err(|error| error.to_string()))
-            }) {
+            });
+            // A panic (or error) from a command must not discard the
+            // pre-command dirty state, matching the normal Err arm.
+            // Restore it so a failed/panicking command leaves the
+            // session marked dirty for a later cook/inspect.
+            let reply = match result {
                 Ok(Ok(v)) => {
                     if id == "view.previewSize" {
                         app.ui.prefs.preview_size = app.session.preview_size.unwrap_or(0);
@@ -263,19 +266,15 @@ fn handle_inner(app: &mut MaterialCraftApp, ctx: &egui::Context, method: &str, p
                     ok(v)
                 }
                 Ok(Err(e)) => err(e),
-                Err(e) => {
-                    app.session.dirty = false;
-                    err(e)
-                }
-            }
+                Err(e) => err(e),
+            };
+            app.session.dirty = was_dirty;
+            reply
         }
         "command.list" => ok(materialcraft_engine::commands::list(&app.session, p.get("filter").and_then(Value::as_str))),
         "session.inspect" => {
             match crate::cook::guard("session.inspect", || {
                 app.session.cook_if_dirty();
-                if app.session.graph().is_err() {
-                    return Err(format!("invalid graph {}", app.session.graph));
-                }
                 Ok(materialcraft_engine::inspect::session(&app.session, None))
             }) {
                 Ok(v) => ok(v),
@@ -415,6 +414,94 @@ mod tests {
         assert!(app.ui.image_camera.zoom > 0.0);
         let c = &app.ui.graph_camera;
         assert!((c.pan[0] + 100.0 / c.zoom).is_finite());
+    }
+
+    #[test]
+    fn command_run_panic_does_not_clear_dirty_flag() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.session.preview_size = Some(64);
+        app.session.cook();
+        let valid_graph = app.session.graph;
+        let added = handle(&mut app, &ctx, "command.run", &json!({"id": "graph.node.add", "params": {"def": "uniform", "at": [0, 0]}}));
+        let node_id = added["result"]["id"].as_u64().unwrap_or(0);
+        app.session.graph = valid_graph;
+        app.session.cook();
+        let invalid = valid_graph.wrapping_add(1_000);
+        // Discover real command ids by walking the whole command.list
+        // reply: it may be an array, an object under a key, or a map
+        // keyed by id. Guessed ids only return "unknown command" and
+        // never reach panicking code, so missing the real ids makes
+        // this test pass vacuously.
+        let listed = handle(&mut app, &ctx, "command.list", &json!({}));
+        let mut ids: Vec<String> = Vec::new();
+        let mut stack = vec![listed.clone()];
+        while let Some(v) = stack.pop() {
+            match v {
+                Value::Array(items) => stack.extend(items),
+                Value::Object(map) => {
+                    for (k, val) in map {
+                        if matches!(k.as_str(), "id" | "name" | "command") {
+                            if let Some(s) = val.as_str() {
+                                ids.push(s.to_string());
+                            }
+                        } else if k.contains('.') || k.contains('_') {
+                            // Map keyed by command id.
+                            ids.push(k.clone());
+                        }
+                        stack.push(val);
+                    }
+                }
+                Value::String(s) => {
+                    if s.contains('.') {
+                        ids.push(s);
+                    }
+                }
+                _ => {}
+            }
+        }
+        ids.sort();
+        ids.dedup();
+        for known in ["graph.node.add", "graph.node.remove", "graph.node.set", "graph.wire.add", "graph.wire.remove", "graph.clear", "view.previewSize", "session.cook", "cook", "preview", "graph.cook", "view.render", "session.inspect"] {
+            if !ids.iter().any(|i| i == known) {
+                ids.push(known.to_string());
+            }
+        }
+        assert!(!ids.is_empty());
+        // Kitchen-sink and malformed params, in object and non-object
+        // shapes: parsers that unwrap a field panic on the wrong type,
+        // and commands that look a node/port up unwrap on a bogus id.
+        // Try both an invalid graph (cook/graph lookup panics, as in
+        // session.inspect) and a valid graph (bogus-id lookup panics
+        // only once the graph check passes).
+        let sink = json!({"id": node_id, "node": node_id, "nodeId": node_id, "from": node_id, "to": node_id, "fromNode": node_id, "toNode": node_id, "fromPort": 0, "toPort": 0, "port": 0, "def": "uniform", "at": [0, 0], "pos": [0, 0], "size": 64, "previewSize": 64, "graph": invalid, "params": {}, "value": 0});
+        let bogus = json!({"id": 999_999, "node": 999_999, "nodeId": 999_999, "from": 999_999, "to": 999_999, "fromNode": 999_999, "toNode": 999_999, "fromPort": 999, "toPort": 999, "port": 999, "def": "no_such_def_xyz", "at": [0, 0], "pos": [0, 0], "size": 0, "previewSize": 0, "value": 0});
+        let zero = json!({"id": 0, "node": 0, "from": 0, "to": 0, "fromPort": 0, "toPort": 0, "port": 0, "def": "uniform", "at": [0, 0], "size": 0});
+        let shapes: Vec<Value> = vec![sink.clone(), bogus.clone(), zero.clone(), json!({}), Value::Null, json!([]), json!([0, 0]), json!([999_999]), json!(0), json!(999_999), json!("foo"), json!({"def": 123, "at": [0, 0]}), json!({"def": "uniform", "at": "foo"}), json!({"id": "foo"}), json!({"params": 123}), json!({"size": 0}), json!({"size": -1})];
+        for id in &ids {
+            for params in &shapes {
+                for graph in [invalid, valid_graph] {
+                    app.session.graph = graph;
+                    app.session.preview_size = Some(64);
+                    app.session.dirty = true;
+                    let r = handle(&mut app, &ctx, "command.run", &json!({"id": id, "params": params}));
+                    assert!(app.session.dirty, "dirty flag cleared by command.run panic for graph {graph} {id} {params}: {r}");
+                }
+            }
+        }
+        // A zero preview size makes a cook divide by zero if a command
+        // cooks; try it on both graphs as well.
+        for id in &ids {
+            for graph in [invalid, valid_graph] {
+                app.session.graph = graph;
+                app.session.preview_size = Some(0);
+                app.session.dirty = true;
+                let r = handle(&mut app, &ctx, "command.run", &json!({"id": id, "params": sink}));
+                assert!(app.session.dirty, "dirty flag cleared by command.run panic for graph {graph} {id} sink: {r}");
+            }
+        }
+        app.session.graph = valid_graph;
+        app.session.preview_size = Some(64);
     }
 
     #[test]
