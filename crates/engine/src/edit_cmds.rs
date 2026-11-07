@@ -217,16 +217,27 @@ fn delete_relink(s: &mut Session, p: &J) -> Result<J> {
 
     let ids = ids_param(s, "edit.deleteRelink", p)?;
     s.edit("Delete and relink", |s| {
-        let graph_snapshot = s.graph()?.clone();
-        let mut sources: BTreeMap<NodeId, Option<(NodeId, String)>> = BTreeMap::new();
-        for id in &ids {
-            // Port order comes from the node definition, not the order its wires were created.
-            let node = graph_snapshot.node(*id).ok();
-            let ports = s.input_ports(*id);
-            let port = ports.iter().find(|port| !node.is_some_and(|node| node.input_values.contains_key(*port)));
-            let entry = port.and_then(|port| graph_snapshot.input_of(*id, port)).map(|c| (c.from, c.from_port.clone()));
-            sources.insert(*id, entry);
-        }
+        let ports_by_id: Vec<Vec<String>> = ids.iter().map(|id| s.input_ports(*id)).collect();
+        let (sources, outs) = {
+            let graph = s.graph()?;
+            let mut sources: BTreeMap<NodeId, Option<(NodeId, String)>> = BTreeMap::new();
+            for (id, ports) in ids.iter().zip(&ports_by_id) {
+                // Port order comes from the node definition, not the order its wires were created.
+                let node = graph.node(*id).ok();
+                let port = ports.iter().find(|port| !node.is_some_and(|node| node.input_values.contains_key(*port)));
+                let entry = port.and_then(|port| graph.input_of(*id, port)).map(|c| (c.from, c.from_port.clone()));
+                sources.insert(*id, entry);
+            }
+            let outs: BTreeMap<NodeId, Vec<(NodeId, String)>> =
+                graph.connections.iter().filter(|c| ids.contains(&c.from)).map(|c| (c.from, (c.to, c.to_port.clone()))).fold(
+                    BTreeMap::new(),
+                    |mut map, (from, to)| {
+                        map.entry(from).or_default().push(to);
+                        map
+                    },
+                );
+            (sources, outs)
+        };
         let mut resolved: BTreeMap<NodeId, Option<(NodeId, String)>> = BTreeMap::new();
         for id in &ids {
             let mut current = sources.get(id).cloned().flatten();
@@ -243,14 +254,6 @@ fn delete_relink(s: &mut Session, p: &J) -> Result<J> {
             }
             resolved.insert(*id, current);
         }
-        let outs: BTreeMap<NodeId, Vec<(NodeId, String)>> =
-            graph_snapshot.connections.iter().filter(|c| ids.contains(&c.from)).map(|c| (c.from, (c.to, c.to_port.clone()))).fold(
-                BTreeMap::new(),
-                |mut map, (from, to)| {
-                    map.entry(from).or_default().push(to);
-                    map
-                },
-            );
         let graph = s.graph_mut()?;
         graph.remove_nodes(&ids);
         // One pass per surviving target: it gets the declared source of
