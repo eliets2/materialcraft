@@ -284,7 +284,10 @@ fn export(s: &mut Session, p: &J) -> Result<J> {
     for f in &files {
         let path = std::path::Path::new(dir).join(&f.file);
         if path.exists() {
-            return Err(bad("file.export", format!("export file already exists `{}`: remove or rename the existing file or export to a different directory", path.display())));
+            return Err(bad(
+                "file.export",
+                format!("export file already exists `{}`: remove or rename the existing file or export to a different directory", path.display()),
+            ));
         }
     }
     std::fs::create_dir_all(dir).map_err(|e| bad("file.export", format!("{dir}: {e}")))?;
