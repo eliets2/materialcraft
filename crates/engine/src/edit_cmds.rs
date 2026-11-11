@@ -217,20 +217,78 @@ fn delete_relink(s: &mut Session, p: &J) -> Result<J> {
 
     let ids = ids_param(s, "edit.deleteRelink", p)?;
     s.edit("Delete and relink", |s| {
-        for id in &ids {
-            // Port order comes from the node definition, not the order its wires were created.
-            let input = s.input_ports(*id).into_iter().next();
-            let g = s.graph_mut()?;
-            let src = input.and_then(|port| g.input_of(*id, &port)).map(|c| (c.from, c.from_port.clone()));
-            let outs: Vec<(NodeId, String)> = g.connections.iter().filter(|c| c.from == *id).map(|c| (c.to, c.to_port.clone())).collect();
-            g.remove_nodes(&[*id]);
-            if let Some((from, port)) = src {
-                for (to, to_port) in outs {
-                    let _ = g.connect(from, &port, to, &to_port);
+        let ports_by_id: Vec<Vec<String>> = ids.iter().map(|id| s.input_ports(*id)).collect();
+        let id_set: std::collections::BTreeSet<NodeId> = ids.iter().cloned().collect();
+        let (sources, outs) = {
+            let graph = s.graph()?;
+            let mut sources: BTreeMap<NodeId, Option<(NodeId, String)>> = BTreeMap::new();
+            for (id, ports) in ids.iter().zip(&ports_by_id) {
+                // Port order comes from the node definition, not the order its wires were created.
+                let node = graph.node(*id).ok();
+                let port = ports.iter().find(|port| !node.is_some_and(|node| node.input_values.contains_key(*port)));
+                let entry = port.and_then(|port| graph.input_of(*id, port)).map(|c| (c.from, c.from_port.clone()));
+                sources.insert(*id, entry);
+            }
+            let outs: BTreeMap<NodeId, Vec<(NodeId, String)>> =
+                graph.connections.iter().filter(|c| id_set.contains(&c.from)).map(|c| (c.from, (c.to, c.to_port.clone()))).fold(
+                    BTreeMap::new(),
+                    |mut map, (from, to)| {
+                        map.entry(from).or_default().push(to);
+                        map
+                    },
+                );
+            (sources, outs)
+        };
+        // Only deleted nodes feeding a surviving target need a resolved source.
+        let needed: std::collections::BTreeSet<NodeId> =
+            outs.iter().filter(|(_, tos)| tos.iter().any(|(to, _)| !id_set.contains(to))).map(|(from, _)| *from).collect();
+        let mut resolved: BTreeMap<NodeId, Option<(NodeId, String)>> = BTreeMap::new();
+        for id in &needed {
+            if resolved.contains_key(id) {
+                continue;
+            }
+            let mut path: Vec<NodeId> = Vec::new();
+            let mut seen: std::collections::BTreeSet<NodeId> = std::collections::BTreeSet::new();
+            let mut current = sources.get(id).cloned().flatten();
+            let terminal: Option<(NodeId, String)> = loop {
+                match current {
+                    None => break None,
+                    Some((from, port)) if !id_set.contains(&from) => break Some((from, port)),
+                    Some((from, _)) => {
+                        if let Some(r) = resolved.get(&from) {
+                            break r.clone();
+                        }
+                        if !seen.insert(from) {
+                            break None;
+                        }
+                        path.push(from);
+                        current = sources.get(&from).cloned().flatten();
+                    }
+                }
+            };
+            resolved.insert(*id, terminal.clone());
+            for node in path {
+                resolved.insert(node, terminal.clone());
+            }
+        }
+        let graph = s.graph_mut()?;
+        graph.remove_nodes(&ids);
+        // One pass per surviving target: it gets the declared source of
+        // its upstream deleted chain. A deleted intermediate is only ever
+        // used as a waypoint in that walk, never as a fan-out itself.
+        for from in outs.keys() {
+            for (to, to_port) in &outs[from] {
+                if id_set.contains(to) {
+                    continue;
+                }
+                if let Some((source, port)) = resolved.get(from).cloned().flatten() {
+                    // Only connect the deleted chain's declared source; do not
+                    // create a second fan-out from an intermediate deleted node.
+                    let _ = graph.connect(source, &port, *to, to_port);
                 }
             }
         }
-        s.selection.retain(|i| !ids.contains(i));
+        s.selection.retain(|i| !id_set.contains(i));
         Ok(json!({"deleted": ids.len()}))
     })
 }

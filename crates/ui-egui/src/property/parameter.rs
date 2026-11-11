@@ -49,7 +49,8 @@ pub(super) fn param_row(
                 ui.close();
             }
             if ui.button(tr("Expose as graph input")).clicked() {
-                app.run("graph.exposed.add", json!({"id": parameter.id, "label": parameter.label, "bind": {"node": node.0, "param": parameter.id}}));
+                // No `id`: the engine names the input after the parameter and keeps it unique when another node exposed it too
+                app.run("graph.exposed.add", json!({"label": parameter.label, "bind": {"node": node.0, "param": parameter.id}}));
                 ui.close();
             }
             if !exposed.is_empty() {

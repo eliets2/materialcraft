@@ -282,6 +282,11 @@ fn export(s: &mut Session, p: &J) -> Result<J> {
     let (gi, ext, pattern, depth, size) = export_params(s, p)?;
     let files = export_outputs(s, gi, &ext, &pattern, depth, size)?;
     std::fs::create_dir_all(dir).map_err(|e| bad("file.export", format!("{dir}: {e}")))?;
+    for f in &files {
+        if std::path::Path::new(dir).join(&f.file).exists() {
+            return Err(bad("file.export", format!("duplicate export filename `{}`: use unique output identifiers or a different filename pattern", f.file)));
+        }
+    }
     let mut written = Vec::new();
     for f in files {
         let path = std::path::Path::new(dir).join(&f.file);

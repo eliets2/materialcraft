@@ -5,6 +5,8 @@ pub(crate) const HEADER_HEIGHT: f32 = 18.0;
 pub(crate) const FOOTER_HEIGHT: f32 = 14.0;
 const PORT_GAP: f32 = 18.0;
 const DOT_RADIUS: f32 = 7.0;
+/// Smallest on-screen side of a dot's grab area, in points
+const DOT_MIN_GRAB: f32 = 16.0;
 
 pub(crate) fn bounds(position: [f32; 2], inputs: usize, outputs: usize, previews: bool, dot: bool) -> Rect {
     let position = pos2(position[0], position[1]);
@@ -15,6 +17,11 @@ pub(crate) fn bounds(position: [f32; 2], inputs: usize, outputs: usize, previews
     let ports = inputs.max(outputs) as f32 * PORT_GAP + 8.0;
     let body = if previews { WIDTH.max(ports) } else { ports.max(26.0) };
     Rect::from_min_size(position, vec2(WIDTH, HEADER_HEIGHT + body + FOOTER_HEIGHT))
+}
+
+/// The on-screen area that picks up dot `bounds`: at least `DOT_MIN_GRAB` wide, so it stays easy to grab when zoomed out
+pub(crate) fn dot_grab(bounds: Rect) -> Rect {
+    Rect::from_center_size(bounds.center(), bounds.size().max(vec2(DOT_MIN_GRAB, DOT_MIN_GRAB)))
 }
 
 pub(crate) fn port(bounds: Rect, index: usize, count: usize, output: bool, dot: bool) -> Pos2 {

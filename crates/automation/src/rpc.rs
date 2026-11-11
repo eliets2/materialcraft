@@ -347,6 +347,14 @@ mod tests {
     }
 
     #[test]
+    fn render_displacement_applies_without_hq() {
+        let h = session();
+        let flat = call(&h, "render", json!({"width": 32, "height": 32, "displacement": 0.0})).unwrap();
+        let strong = call(&h, "render", json!({"width": 32, "height": 32, "displacement": 0.5})).unwrap();
+        assert_ne!(flat["png"], strong["png"], "displacement must change the 3D relief without hq");
+    }
+
+    #[test]
     fn tcp_requires_the_token() {
         use std::io::{BufRead, BufReader};
         let h = Arc::new(session());

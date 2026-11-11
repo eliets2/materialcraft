@@ -62,6 +62,14 @@ mod worker_failure_tests {
     }
 
     #[test]
+    fn guard_reports_unknown_panic_payload_instead_of_empty() {
+        let r: Result<u32, String> = guard("test", || -> Result<u32, String> { std::panic::panic_any(42) });
+        let e = r.unwrap_err();
+        assert!(e.contains("unknown"), "{e}");
+        assert!(!e.trim_end().ends_with(':'), "{e}");
+    }
+
+    #[test]
     fn a_panicked_cook_worker_reports_errors_on_every_node() {
         let mut app = app();
         assert!(app.session.cook_failures().0.is_empty());

@@ -78,7 +78,7 @@ Types: `move`, `down`, `up`, `click`, `doubleClick`, `drag`, `scroll`, `key` (eg
 | `graph.wire.swap` / `graph.wire.delete` | `{wires: [{to, toPort}, ...]}`: swap (two) or reverse (more, in input order) where the wires come from / delete them, one undo step each |
 | `graph.node.param` | `{id?, param, value}`: numbers, `[x, y]`, `"#rrggbb"`, enum index, curve `[[x, y], …]`, gradient `[[pos, color], …]`, or a typed value `{"t": "function", "v": {...}}` |
 | `graph.node.base` | `{id?, sizeMode?, size?, format?, seed?, tiling?}` |
-| `graph.exposed.add` / `graph.exposed.set` | `{id, label?, default?, bind?: {node, param}}` / `{id, value}` |
+| `graph.exposed.add` / `graph.exposed.set` | `{id, label?, default?, bind?: {node, param}}` (with `bind`, `id` may be omitted: the input is named after the parameter, `opacity`, `opacity_1`…) / `{id, value}` |
 | `graph.node.function` | `{id?, param, function}` drives a parameter by a function graph of the graph's inputs (dynamic parameter); `{id?, param, remove: true}` removes it |
 | `graph.preset.save` / `.apply` / `.delete` | `{name}`: store, restore or remove the current input values |
 | `graph.createFromSelection` | `{name?, ids?}`: move nodes into a sub-graph and replace them with an instance |

@@ -162,7 +162,7 @@ fn export_material(s: &mut Session, p: &J) -> Result<J> {
     for (id, file) in p.get("inputs").and_then(J::as_object).into_iter().flatten() {
         let file = file.as_str().ok_or_else(|| bad(CMD, format!("inputs.{id} must be an image path")))?;
         let bytes = std::fs::read(file).map_err(|e| bad(CMD, format!("{file}: {e}")))?;
-        o.inputs.insert(id.clone(), materialcraft_formats::decode(&bytes, false)?);
+        o.inputs.insert(id.clone(), materialcraft_formats::decode(&bytes, !srgb_usage(id))?);
     }
     let bytes = material_bytes(s, gi, &o)?;
     materialcraft_formats::write_atomic(std::path::Path::new(&path), &bytes)?;
@@ -311,5 +311,50 @@ mod tests {
         let g = s.graph().unwrap();
         assert!(values_param("t", g, &json!({"values": {"no_such_input": 1}})).is_err());
         assert!(values_param("t", g, &json!({})).unwrap().is_empty());
+    }
+
+    #[test]
+    fn export_material_decodes_data_inputs_as_linear() {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            use materialcraft_formats::decode;
+
+            let mut s = crate::sample_session();
+            let input =
+                crate::execute(&mut s, "graph.node.add", &json!({"def": "input_color", "params": {"identifier": "normal"}})).unwrap()["id"].as_u64().unwrap();
+            let output =
+                crate::execute(&mut s, "graph.node.add", &json!({"def": "output", "params": {"usage": ComponentUsage::index("normal")}})).unwrap()["id"]
+                    .as_u64()
+                    .unwrap();
+            crate::execute(&mut s, "graph.connect", &json!({"from": input, "to": output})).unwrap();
+
+            let png = encode(&Image::filled(16, 16, materialcraft_image::Kind::Color, [128.0 / 255.0; 4]), "png", Depth::U16, false).unwrap();
+            let dir = std::env::temp_dir().join(format!("materialcraft-linear-input-{}", std::process::id()));
+            std::fs::create_dir_all(&dir).unwrap();
+            let file = dir.join("normal.png");
+            std::fs::write(&file, &png).unwrap();
+            let input_path = file.to_str().unwrap().to_string();
+            let output_path = dir.join("out.mcmat").to_str().unwrap().to_string();
+
+            let result = crate::execute(&mut s, "file.exportMaterial", &json!({"path": output_path, "size": 16, "inputs": {"normal": input_path}}));
+            assert!(result.is_ok());
+
+            let bytes = std::fs::read(&output_path).unwrap();
+            let _ = std::fs::remove_dir_all(&dir);
+
+            // The material archive stores maps uncompressed; pull the normal map
+            // out of its local file header and decode it as linear data.
+            let name = b"maps/normal.png";
+            let pos = bytes.windows(name.len()).position(|w| w == name).unwrap();
+            let header = pos - 30;
+            assert_eq!(&bytes[header..header + 4], b"PK\x03\x04");
+            let name_len = u16::from_le_bytes([bytes[header + 26], bytes[header + 27]]) as usize;
+            let extra_len = u16::from_le_bytes([bytes[header + 28], bytes[header + 29]]) as usize;
+            let compressed = u32::from_le_bytes([bytes[header + 18], bytes[header + 19], bytes[header + 20], bytes[header + 21]]) as usize;
+            let start = header + 30 + name_len + extra_len;
+            let map = &bytes[start..start + compressed];
+            let decoded = decode(map, true).unwrap();
+            assert!((decoded.get(0, 0, false)[0] - 128.0 / 255.0).abs() < 1e-3, "data inputs must be decoded as linear");
+        }
     }
 }

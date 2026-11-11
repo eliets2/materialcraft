@@ -302,18 +302,12 @@ pub fn blend_channel(mode: i32, b: f32, f: f32) -> f32 {
         }
         12 => (b - f).abs(),
         13 => {
-            if f >= 1.0 {
-                1.0
-            } else {
-                (b / (1.0 - f)).min(1.0)
-            }
+            // W3C color dodge: a black background stays black, even under a white foreground
+            if f >= 1.0 { if b > 0.0 { 1.0 } else { 0.0 } } else { (b / (1.0 - f)).min(1.0) }
         }
         14 => {
-            if f <= 0.0 {
-                0.0
-            } else {
-                1.0 - ((1.0 - b) / f).min(1.0)
-            }
+            // W3C color burn: a white background stays white, even under a black foreground
+            if f <= 0.0 { if b < 1.0 { 0.0 } else { 1.0 } } else { 1.0 - ((1.0 - b) / f).min(1.0) }
         }
         15 => {
             if f < 0.5 {
@@ -351,6 +345,19 @@ pub fn gray_from(w: u32, h: u32, v: Vec<f32>) -> Image {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn color_dodge_and_burn_keep_black_and_white_backgrounds() {
+        const DODGE: i32 = 13;
+        const BURN: i32 = 14;
+        // (background, foreground, expected), W3C compositing formulas
+        for (b, f, expected) in [(0.0, 1.0, 0.0), (0.0, 0.5, 0.0), (0.5, 1.0, 1.0), (0.25, 0.5, 0.5), (1.0, 0.75, 1.0)] {
+            assert_eq!(blend_channel(DODGE, b, f), expected, "dodge b={b} f={f}");
+        }
+        for (b, f, expected) in [(1.0, 0.0, 1.0), (1.0, 0.5, 1.0), (0.5, 0.0, 0.0), (0.75, 0.5, 0.5), (0.0, 0.25, 0.0)] {
+            assert_eq!(blend_channel(BURN, b, f), expected, "burn b={b} f={f}");
+        }
+    }
 
     #[test]
     fn blur_keeps_mean_and_tiles() {

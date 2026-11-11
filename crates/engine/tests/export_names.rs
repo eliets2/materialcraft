@@ -80,6 +80,23 @@ fn colliding_export_preserves_existing_files_and_writes_no_partial_outputs() {
 
 #[test]
 #[cfg(not(target_arch = "wasm32"))]
+fn export_rejects_existing_file_in_destination_before_writing() {
+    let (mut s, _) = session();
+    let dir = TempDir::new("existing");
+    let sentinel = b"existing file must survive a rejected export";
+    std::fs::write(dir.0.join("first.png"), sentinel).unwrap();
+    let result = execute(&mut s, "file.export", &json!({"dir": dir.0, "pattern": "$(identifier)"}));
+    let existing = std::fs::read(dir.0.join("first.png")).unwrap();
+    let files = std::fs::read_dir(&dir.0).unwrap().count();
+    assert!(
+        result.is_err() && existing == sentinel && files == 1,
+        "export overwrote an existing destination file: response={result:?}, files={files}, sentinel preserved={}",
+        existing == sentinel
+    );
+}
+
+#[test]
+#[cfg(not(target_arch = "wasm32"))]
 fn unique_export_writes_both_maps_with_their_expected_pixels() {
     let (mut s, _) = session();
     let dir = TempDir::new("unique");

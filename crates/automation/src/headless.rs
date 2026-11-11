@@ -227,7 +227,7 @@ impl Headless {
             self.light = Some(Lighting::new(&v.environment));
         }
         let tiling = o.tiling.unwrap_or(v.tiling).clamp(0.1, 64.0);
-        let depth = if o.hq { o.displacement.unwrap_or(v.height_scale) } else { v.height_scale };
+        let depth = o.displacement.unwrap_or(v.height_scale);
         let relief = Relief { depth: depth.clamp(0.0, 0.5), level: v.height_level };
         let mut settings = Settings {
             yaw: o.yaw.unwrap_or(v.yaw),
