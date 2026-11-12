@@ -327,7 +327,7 @@ mod tests {
         std::fs::write(base.join("curv.png"), &png).unwrap();
         let mut s = materialcraft_engine::sample_session();
         materialcraft_engine::execute(&mut s, "graph.node.add", &json!({"def": "input_grayscale", "params": {"identifier": "curvature"}})).unwrap();
-        let ws = crate::AuthorizedWorkspace::new(None, Some(&base)).unwrap();
+        let ws = crate::AuthorizedWorkspace::new(Some(&base), Some(&base)).unwrap();
         let mcp = MaterialCraftMcp::headless(Headless::new(s, Filesystem::Workspace(ws)));
         let with = |inputs: Value| Parameters(MaterialExportParams { path: "m2".into(), graph: None, size: Some(16), values: None, inputs: Some(inputs) });
         assert_eq!(mcp.material_export(with(json!({"other": "curv.png"}))).await.unwrap().is_error, Some(true));

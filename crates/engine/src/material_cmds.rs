@@ -162,7 +162,13 @@ pub const MAX_INPUT_DECODED_BYTES: u64 = 2 << 30;
 /// Reads the `inputs` map (input id to image path) of an export request into `inputs`. Ids must name
 /// an image input of graph `g`, and the decoded images must fit `MAX_INPUT_DECODED_BYTES` together.
 #[cfg(not(target_arch = "wasm32"))]
-pub fn load_inputs(cmd: &str, read: impl Fn(&str) -> std::result::Result<Vec<u8>, String>, g: &Graph, p: &J, inputs: &mut BTreeMap<String, Image>) -> Result<()> {
+pub fn load_inputs(
+    cmd: &str,
+    read: impl Fn(&str) -> std::result::Result<Vec<u8>, String>,
+    g: &Graph,
+    p: &J,
+    inputs: &mut BTreeMap<String, Image>,
+) -> Result<()> {
     load_inputs_within(cmd, read, g, p, inputs, MAX_INPUT_DECODED_BYTES)
 }
 
@@ -190,7 +196,8 @@ fn load_inputs_within(
         let bytes = read(file).map_err(|e| bad(cmd, e))?;
         let image = materialcraft_formats::decode(&bytes, !srgb_usage(id))?;
         let decoded = image.w as u64 * image.h as u64 * 16;
-        total = total.checked_add(decoded).filter(|t| *t <= budget).ok_or_else(|| bad(cmd, format!("the inputs decode to more than {budget} bytes in total")))?;
+        total =
+            total.checked_add(decoded).filter(|t| *t <= budget).ok_or_else(|| bad(cmd, format!("the inputs decode to more than {budget} bytes in total")))?;
         inputs.insert(id.clone(), image);
     }
     Ok(())
@@ -198,7 +205,14 @@ fn load_inputs_within(
 
 /// `load_inputs` for a request that cooks graph `gi` of session `s`.
 #[cfg(not(target_arch = "wasm32"))]
-pub fn load_request_inputs(cmd: &str, read: impl Fn(&str) -> std::result::Result<Vec<u8>, String>, s: &Session, gi: usize, p: &J, o: &mut MaterialOptions) -> Result<()> {
+pub fn load_request_inputs(
+    cmd: &str,
+    read: impl Fn(&str) -> std::result::Result<Vec<u8>, String>,
+    s: &Session,
+    gi: usize,
+    p: &J,
+    o: &mut MaterialOptions,
+) -> Result<()> {
     load_inputs(cmd, read, s.pkg.graph(gi)?, p, &mut o.inputs)
 }
 
