@@ -269,6 +269,7 @@ fn delete_relink(s: &mut Session, p: &J) -> Result<J> {
         // One pass per surviving target: it gets the declared source of
         // its upstream deleted chain. A deleted intermediate is only ever
         // used as a waypoint in that walk, never as a fan-out itself.
+        let mut replacements = Vec::new();
         for from in outs.keys() {
             for (to, to_port) in &outs[from] {
                 if id_set.contains(to) {
@@ -277,8 +278,14 @@ fn delete_relink(s: &mut Session, p: &J) -> Result<J> {
                 if let Some((source, port)) = resolved.get(from).cloned().flatten() {
                     // Only connect the deleted chain's declared source; do not
                     // create a second fan-out from an intermediate deleted node.
-                    let _ = graph.connect(source, &port, *to, to_port);
+                    replacements.push((source, port, *to, to_port.clone()));
                 }
+            }
+        }
+        for (source, port, to, to_port) in replacements {
+            // Same endpoint and type rules as graph.connect: an incompatible target stays disconnected.
+            if crate::connection_commands::validate_connection(s, source, &port, to, &to_port).is_ok() {
+                let _ = s.graph_mut()?.connect(source, &port, to, &to_port);
             }
         }
         s.selection.retain(|i| !id_set.contains(i));
