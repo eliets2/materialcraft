@@ -113,6 +113,25 @@ fn relink_does_not_substitute_secondary_input_when_first_unconnected_with_value_
 }
 
 #[test]
+fn relink_does_not_wire_an_image_into_a_float_input() {
+    // The processor's first image input comes from a colour, and its Float output feeds
+    // blend.brightness. Deleting the processor must not wire the colour into brightness.
+    let mut s = new_session();
+    let source = node(&mut s, "uniform");
+    let processor = node(&mut s, "value_processor");
+    run(&mut s, "graph.node.value_input", json!({"id": processor, "name": "integer", "type": "Integer"}));
+    let blend = node(&mut s, "blend");
+    run(&mut s, "graph.node.value_input", json!({"id": blend, "name": "brightness", "type": "Float"}));
+    let output = node(&mut s, "output");
+    connect(&mut s, source, processor, "input0");
+    connect(&mut s, processor, blend, "brightness");
+    connect(&mut s, blend, output, "input");
+    run(&mut s, "graph.select", json!({"ids": [processor]}));
+    run(&mut s, "edit.deleteRelink", json!({}));
+    assert!(s.graph().unwrap().input_of(NodeId(blend), "brightness").is_none());
+}
+
+#[test]
 fn relink_cycle_between_deleted_nodes_does_not_relink() {
     let mut s = new_session();
     let a = node(&mut s, "levels");
