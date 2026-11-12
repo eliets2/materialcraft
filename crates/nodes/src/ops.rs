@@ -48,10 +48,10 @@ pub fn gaussian(img: &Image, sigma: f32, tile: bool) -> Image {
     out
 }
 
-/// Border handling: out-of-range taps are skipped and the accumulator is divided by the sum
-/// of in-range kernel weights (`wsum`), so edge pixels are averaged over in-range taps only.
-/// This changes small-sigma (sigma < 3) gaussian border output compared with a clamped-tap
-/// sum; constant images stay constant at the border.
+/// Border handling: without `tile`, out-of-range taps are skipped and the accumulator is divided
+/// by the sum of in-range kernel weights (`wsum`), so edge pixels are averaged over in-range taps
+/// only. With `tile`, every tap is sampled and wraps through `Image::get`, so the blur stays
+/// periodic at the edges. Constant images stay constant at the border.
 fn convolve_1d(src: &Image, k: &[f32], r: i64, horizontal: bool, tile: bool) -> Image {
     let c = src.channels();
     Image::generate(src.w, src.h, src.kind, |x, y| {
@@ -61,7 +61,7 @@ fn convolve_1d(src: &Image, k: &[f32], r: i64, horizontal: bool, tile: bool) -> 
             let o = i as i64 - r;
             let pos = if horizontal { x as i64 + o } else { y as i64 + o };
             let n = if horizontal { src.w } else { src.h } as i64;
-            if pos < 0 || pos >= n {
+            if !tile && (pos < 0 || pos >= n) {
                 continue;
             }
             let p = if horizontal { src.get(pos, y as i64, tile) } else { src.get(x as i64, pos, tile) };
@@ -500,18 +500,14 @@ mod tests {
     }
 
     #[test]
-    fn gaussian_tiled_matches_untiled_for_oversized_radius() {
-        let img = Image::gray(4, 5, |x, y| ((x * 3 + y * 5) % 7) as f32 / 6.0);
-        for sigma in [2.0f32, 20.0] {
-            let tiled = gaussian(&img, sigma, true);
-            let untiled = gaussian(&img, sigma, false);
-            for y in 0..img.h as i64 {
-                for x in 0..img.w as i64 {
-                    let diff = (tiled.get(x, y, true)[0] - untiled.get(x, y, false)[0]).abs();
-                    assert!(diff < 1e-4, "sigma {sigma} pixel {x},{y} diff {diff}");
-                }
-            }
-        }
+    fn gaussian_small_sigma_tiled_wraps_edges() {
+        // Impulse in the first column of a tiled image: a symmetric kernel on a periodic
+        // image must give equal values one pixel left and right of the impulse.
+        let img = Image::gray(16, 16, |x, _y| if x == 0 { 1.0 } else { 0.0 });
+        let b = gaussian(&img, 1.0, true);
+        let right_edge = b.get(15, 0, true)[0];
+        assert!(right_edge > 0.2, "wrapped contribution missing: {right_edge}");
+        assert!((right_edge - b.get(1, 0, true)[0]).abs() < 1e-5, "{right_edge} vs {}", b.get(1, 0, true)[0]);
     }
 
     #[test]
