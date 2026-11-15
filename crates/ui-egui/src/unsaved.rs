@@ -70,8 +70,8 @@ pub fn guard(app: &mut MaterialCraftApp, action: Guarded) {
 /// Run an allowed action
 fn perform(app: &mut MaterialCraftApp, action: Guarded) {
     match action {
-        Guarded::Menu { .. } => {
-            app.run("file.newPackage", Value::Null);
+        Guarded::Menu { id } => {
+            app.run(&id, Value::Null);
         }
         #[cfg(not(target_arch = "wasm32"))]
         Guarded::OpenPath { path } => crate::windows::open_path_now(app, &path),

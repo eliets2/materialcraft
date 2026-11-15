@@ -51,3 +51,23 @@ fn a_pending_action_is_kept_even_if_the_package_was_saved_elsewhere() {
     assert!(crate::unsaved::request(&mut pending, false, crate::unsaved::Guarded::Menu { id: "ui.closeAll".into() }).is_none());
     assert_eq!(pending, Some(first));
 }
+
+#[test]
+fn held_close_all_does_not_create_new_package() {
+    use crate::unsaved::{Choice, Guarded, Step, guard};
+    let mut app = crate::MaterialCraftApp::headless(materialcraft_engine::sample_session(), crate::UiState::default());
+    app.session.modified = true;
+    guard(&mut app, Guarded::Menu { id: "ui.closeAll".into() });
+    assert_eq!(app.ui.windows.unsaved, Some(Guarded::Menu { id: "ui.closeAll".into() }));
+    if let Step::Run(action) = crate::unsaved::answer(&mut app.ui.windows.unsaved, Choice::Discard) {
+        assert_eq!(action, Guarded::Menu { id: "ui.closeAll".into() });
+        drop(action);
+    } else {
+        panic!("missing held action");
+    }
+    let mut clean = crate::MaterialCraftApp::headless(materialcraft_engine::sample_session(), crate::UiState::default());
+    clean.session.modified = false;
+    let clean_before = clean.session.pkg.name.clone();
+    guard(&mut clean, Guarded::Menu { id: "ui.closeAll".into() });
+    assert_eq!(clean.session.pkg.name, clean_before, "closeAll must not create a new package");
+}
