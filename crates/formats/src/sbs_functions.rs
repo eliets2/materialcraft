@@ -1,10 +1,7 @@
 //! Clean-room import of a bounded subset of numeric SBS parameter expressions.
 //! Unsupported operations retain the reader's warning-and-default behavior.
 
-use materialcraft_core::{
-    Value,
-    function::{FnGraph, FnNode},
-};
+use materialcraft_core::{FunctionGraph, FunctionNode, Value};
 use std::collections::{BTreeMap, HashMap};
 
 use super::{XmlNode, child_element, child_value, children_named, sbs_constant, sbs_constant_element, to_natural_value};
@@ -21,7 +18,7 @@ fn float_dims(value: &Value) -> Option<usize> {
     }
 }
 
-pub(super) fn read(dynamic: XmlNode, variables: &BTreeMap<String, Value>, target: &Value) -> Result<FnGraph, String> {
+pub(super) fn read(dynamic: XmlNode, variables: &BTreeMap<String, Value>, target: &Value) -> Result<FunctionGraph, String> {
     let expected = float_dims(target).ok_or("only float parameter expressions are supported")?;
     let elements: Vec<_> = child_element(dynamic, "paramNodes").into_iter().flat_map(|p| children_named(p, "paramNode")).take(MAX_NODES + 1).collect();
     if elements.is_empty() || elements.len() > MAX_NODES {
@@ -35,7 +32,7 @@ pub(super) fn read(dynamic: XmlNode, variables: &BTreeMap<String, Value>, target
         }
     }
     let output = child_value(dynamic, "rootnode").and_then(|uid| ids.get(uid)).copied().ok_or("function rootnode is missing or unknown")?;
-    let mut graph = FnGraph { nodes: Vec::with_capacity(elements.len()), output: Some(output) };
+    let mut graph = FunctionGraph { nodes: Vec::with_capacity(elements.len()), output: Some(output) };
     for (index, node) in elements.iter().enumerate() {
         if child_value(*node, "disabled").is_some_and(|v| v != "0") {
             return Err("disabled function nodes are not supported".into());
@@ -90,10 +87,10 @@ pub(super) fn read(dynamic: XmlNode, variables: &BTreeMap<String, Value>, target
         if inputs.iter().any(Option::is_none) {
             return Err(format!("`{name}` has an unconnected input"));
         }
-        graph.nodes.push(FnNode { id: index as u32 + 1, op: op.into(), inputs, value, pos: [index as f32 * 140.0, 0.0] });
+        graph.nodes.push(FunctionNode { id: index as u32 + 1, op: op.into(), inputs, value, type_code: 0 });
     }
-    let program = materialcraft_nodes::function::compile(&graph, variables, 0)?;
-    if program.dims() != expected {
+    let program = materialcraft_nodes::function::compile(&graph, 0)?;
+    if program.output_type() != 256 << (expected - 1) {
         return Err("function result type does not match the parameter".into());
     }
     Ok(graph)

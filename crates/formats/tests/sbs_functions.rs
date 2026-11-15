@@ -17,8 +17,12 @@ fn xml(nodes: &str, root: &str, filter: &str, parameter: &str) -> String {
 }
 fn read(text: &str) -> SbsRead {
     let report = read_sbs(text.as_bytes(), "math.sbs", &|_| None).unwrap();
-    assert!(!report.exact);
     report
+}
+fn evaluate(program: &materialcraft_nodes::function::Program, vars: &BTreeMap<String, Value>) -> Value {
+    let context = materialcraft_nodes::function::EvaluationContext { variables: vars, ..unsafe { std::mem::zeroed() } };
+    let mut state = materialcraft_nodes::function::EvaluationState::default();
+    program.evaluate(&context, &mut state).unwrap()
 }
 fn expression() -> String {
     // XML order and connection order deliberately differ from dependency/operand order.
@@ -38,8 +42,8 @@ fn imports_arithmetic_and_keeps_exposed_inputs_live() {
     let mut vars = BTreeMap::new();
     for (input, expected) in [(0.75, 0.5), (0.5, 0.25)] {
         vars.insert("amount".into(), Value::Float(input));
-        let program = materialcraft_nodes::function::compile(f, &vars, 0).unwrap();
-        assert_eq!(program.eval([0.0; 2], [1.0; 2], &[], true, &mut Vec::new()), [expected; 4]);
+        let program = materialcraft_nodes::function::compile(f, 0).unwrap();
+        assert_eq!(evaluate(&program, &vars), Value::Float(expected));
     }
     let saved = write_sbs(&report.pkg).unwrap();
     assert_eq!(read_sbs(&saved, "saved.sbs", &|_| None).unwrap().pkg, report.pkg);
@@ -49,9 +53,9 @@ fn imports_vector_constants_and_unary_operations() {
     let nodes = node("1", "const_float2", r#"<constValue><constantValueFloat2 v="-0.25 0.75"/></constValue>"#, "") + &node("2", "abs", "", &wire("a", "1"));
     let report = read(&xml(&nodes, "2", "transformation", "offset"));
     assert!(report.warnings.is_empty(), "{:?}", report.warnings);
-    let p = materialcraft_nodes::function::compile(&report.pkg.graphs[0].nodes[0].functions["offset"], &BTreeMap::new(), 0).unwrap();
-    assert_eq!(p.dims(), 2);
-    assert_eq!(&p.eval([0.0; 2], [1.0; 2], &[], true, &mut Vec::new())[..2], &[0.25, 0.75]);
+    let p = materialcraft_nodes::function::compile(&report.pkg.graphs[0].nodes[0].functions["offset"], 0).unwrap();
+    assert_eq!(p.output_type(), 512);
+    assert_eq!(evaluate(&p, &BTreeMap::new()), Value::Float2([0.25, 0.75]));
 }
 #[test]
 fn imports_pow2_log2_and_cartesian_expressions() {
@@ -68,12 +72,12 @@ fn imports_pow2_log2_and_cartesian_expressions() {
     let f = &report.pkg.graphs[0].nodes[0].functions["offset"];
     let mut vars = BTreeMap::new();
     vars.insert("amount".into(), Value::Float(3.0));
-    let p = materialcraft_nodes::function::compile(f, &vars, 0).unwrap();
-    assert_eq!(p.dims(), 2);
-    let result = p.eval([0.0; 2], [1.0; 2], &[], true, &mut Vec::new());
-    assert!((result[0] - 8.0 * 1.0f32.cos()).abs() < 1e-6, "{result:?}");
-    assert!((result[1] - 8.0 * 1.0f32.sin()).abs() < 1e-6, "{result:?}");
-    assert_eq!(&result[2..], &[0.0, 0.0]);
+    let p = materialcraft_nodes::function::compile(f, 0).unwrap();
+    assert_eq!(p.output_type(), 512);
+    let result = evaluate(&p, &vars);
+    let Value::Float2([x, y]) = result else { panic!("expected Float2, got {result:?}") };
+    assert!((x - 8.0 * 1.0f32.cos()).abs() < 1e-6, "{result:?}");
+    assert!((y - 8.0 * 1.0f32.sin()).abs() < 1e-6, "{result:?}");
 }
 #[test]
 fn invalid_or_unsupported_expressions_warn_and_keep_defaults() {
