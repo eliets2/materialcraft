@@ -678,17 +678,20 @@ fn canvas(app: &mut MaterialCraftApp, ui: &mut Ui) {
                 let bits = if n.base.format == materialcraft_engine::core::OutputFormat::Inherit { g.format.bits() } else { n.base.format.bits() };
                 let format = format!("{}{}", if img.is_gray() { "L" } else { "C" }, bits);
                 let txt = if let Some(limit) = app.session.preview_size {
-                    if error.is_none() {
-                        let [pw, ph] = g.size_px();
-                        resp.clone().on_hover_text(format!(
-                            "{} x {} ({format}bpc)\n{}: {pw} x {ph}\n{}: {limit} px\n{}",
-                            img.w,
-                            img.h,
-                            tr("Parent size"),
-                            tr("Preview limit"),
-                            tr("Change Preview size while editing in Edit > Preferences. Exports use each node's configured output size.")
-                        ));
-                    }
+                    let [pw, ph] = g.size_px();
+                    let tooltip = format!(
+                        "{} x {} ({format}bpc)\n{}: {pw} x {ph}\n{}: {limit} px\n{}",
+                        img.w,
+                        img.h,
+                        tr("Parent size"),
+                        tr("Preview limit"),
+                        tr("Change Preview size while editing in Edit > Preferences. Exports use each node's configured output size.")
+                    );
+                    let tooltip = match &error {
+                        Some(e) => format!("{tooltip}\n{e}"),
+                        None => tooltip,
+                    };
+                    resp.clone().on_hover_text(tooltip);
                     format!("{}x{} {}", img.w, img.h, tr("Preview"))
                 } else {
                     format!("{}x{} - {format}", img.w, img.h)
@@ -711,8 +714,11 @@ fn canvas(app: &mut MaterialCraftApp, ui: &mut Ui) {
             if n.disabled {
                 painter.line_segment([sr.left_top(), sr.right_bottom()], Stroke::new(1.5, tk.danger));
             }
-            if let Some(e) = &error {
-                resp.clone().on_hover_text(e);
+            let has_preview_tooltip = app.session.preview_size.is_some() && result.and_then(|r| r.outputs.first()).is_some();
+            if !has_preview_tooltip {
+                if let Some(e) = &error {
+                    resp.clone().on_hover_text(e);
+                }
             }
         }
         node_resps.push((n.id, resp));
@@ -1821,5 +1827,48 @@ mod tests {
         let dir = std::path::PathBuf::from(std::env::var_os("MC_SNAPSHOT_DIR").expect("set MC_SNAPSHOT_DIR"));
         std::fs::create_dir_all(&dir).unwrap();
         h.render().unwrap().save(dir.join("search-result-61.png")).unwrap();
+    }
+
+    #[test]
+    fn error_node_still_shows_preview_resolution_tooltip() {
+        let mut app = MaterialCraftApp::headless(materialcraft_engine::sample_session(), crate::UiState::default());
+        app.run("file.new", json!({"template": "empty"}));
+        let id = NodeId(app.run("graph.node.add", json!({"def": "uniform"})).and_then(|v| v["id"].as_u64()).unwrap());
+        app.session.cook();
+        assert!(app.session.preview_size.is_some());
+        let result = app.session.cooked.nodes.get_mut(&id).unwrap();
+        result.error = Some("cook failed".to_string());
+        assert!(result.outputs.first().is_some());
+        let builder = egui_kittest::Harness::builder().with_size(vec2(1600.0, 960.0)).with_step_dt(1.0 / 60.0);
+        let mut h = builder.build_ui_state(
+            |ui, app: &mut MaterialCraftApp| {
+                app.step(&ui.ctx().clone());
+                app.draw(ui);
+            },
+            app,
+        );
+        h.run_steps(10);
+        let rect = h.state().graph.rects.iter().find(|(n, _)| *n == id).unwrap().1;
+        h.event(egui::Event::PointerMoved(rect.center()));
+        h.run_steps(90);
+        fn texts(shape: &egui::epaint::Shape, out: &mut Vec<String>) {
+            match shape {
+                egui::epaint::Shape::Text(t) => out.push(t.galley.text().to_owned()),
+                egui::epaint::Shape::Vec(shapes) => {
+                    for s in shapes {
+                        texts(s, out);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut painted = Vec::new();
+        for s in &h.output().shapes {
+            texts(&s.shape, &mut painted);
+        }
+        let text = painted.join("\n");
+        assert!(text.contains("Parent size:"), "missing parent size in tooltip: {text}");
+        assert!(text.contains("Preview limit: 512 px"), "missing preview limit in tooltip: {text}");
+        assert!(text.contains("Edit > Preferences"), "missing preview-size hint in tooltip: {text}");
     }
 }
