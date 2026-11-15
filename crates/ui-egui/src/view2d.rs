@@ -33,7 +33,8 @@ fn histogram(px: &[u8], channels: usize) -> Vec<[u32; BINS]> {
 }
 
 pub fn title(app: &MaterialCraftApp) -> String {
-    let name = app.session.view2d_image().and_then(|(id, _)| app.session.graph().ok()?.node(id).ok().map(crate::graph::node_label));
+    let id = app.session.selection.last().copied().or_else(|| app.session.view2d_image().map(|(id, _)| id));
+    let name = id.and_then(|id| app.session.graph().ok()?.node(id).ok().map(crate::graph::node_label));
     format!("{} - {}", name.unwrap_or_default(), tr("2D View"))
 }
 
@@ -53,6 +54,13 @@ fn rgba8(img: &Image, channel: &str) -> Vec<u8> {
 }
 
 pub fn show(app: &mut MaterialCraftApp, ui: &mut Ui) {
+    // Adopt the clicked node: selecting a node updates the 2D view.
+    if let Some(selected) = app.session.selection.last().copied() {
+        let selected_valid = app.session.graph().ok().is_some_and(|g| g.node(selected).is_ok());
+        if selected_valid && app.session.view2d.node != Some(selected) {
+            app.run("view.2d", json!({"node": selected.0}));
+        }
+    }
     let tk = Tokens::get(ui.ctx());
     let ctx = ui.ctx().clone();
     // Toolbar.
@@ -257,6 +265,25 @@ fn save_image(app: &mut MaterialCraftApp) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn selected_node_is_shown_in_2d_view_title() {
+        let mut session = materialcraft_engine::new_session();
+        let (before, selected) = {
+            let graph = session.graph_mut().unwrap();
+            let before = graph.add_node("uniform", [0.0, 0.0]);
+            let selected = graph.add_node("uniform", [300.0, 0.0]);
+            graph.node_mut(before).unwrap().label = "Before".into();
+            graph.node_mut(selected).unwrap().label = "Selected".into();
+            (before, selected)
+        };
+        session.cook();
+        session.selection = vec![selected];
+        session.view2d.node = Some(before);
+
+        let app = crate::MaterialCraftApp::headless(session, crate::UiState::default());
+        assert_eq!(super::title(&app), "Selected - 2D View");
+    }
+
     #[test]
     fn histogram_counts_every_pixel_once_per_channel() {
         let px = [0, 128, 255, 255, 255, 128, 0, 255];
