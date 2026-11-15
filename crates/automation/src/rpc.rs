@@ -384,4 +384,39 @@ mod tests {
         assert_eq!(ok[1]["result"], "pong");
         assert_eq!(ok[1]["id"], 2);
     }
+
+    #[test]
+    fn tcp_non_utf8_after_auth_keeps_connection_open() {
+        let h = Arc::new(session());
+        let (tx, rx) = std::sync::mpsc::channel();
+        let token = "0123456789abcdef0123".to_string();
+        std::thread::spawn(move || serve_tcp(0, h, token, |a| tx.send(a).unwrap()));
+        let addr = rx.recv().unwrap();
+        let mut s = std::net::TcpStream::connect(addr).unwrap();
+        s.set_read_timeout(Some(std::time::Duration::from_secs(10))).unwrap();
+        let mut w = s.try_clone().unwrap();
+        let mut r = std::io::BufReader::new(s);
+        let mut reply = String::new();
+        writeln!(w, "{}", r#"{"id":1,"method":"auth","params":{"token":"0123456789abcdef0123"}}"#).unwrap();
+        r.read_line(&mut reply).unwrap();
+        let v: Value = serde_json::from_str(&reply).unwrap();
+        assert_eq!(v["ok"], true, "auth reply: {v}");
+        w.write_all(b"\xff\n").unwrap();
+        w.flush().unwrap();
+        reply.clear();
+        let n = r.read_line(&mut reply).unwrap();
+        assert!(n > 0, "connection closed after non-UTF8 after auth, reply so far: {reply:?}");
+        let v: Value = serde_json::from_str(&reply).unwrap();
+        assert_eq!(v["ok"], false, "non-UTF8 after auth reply: {v}");
+        assert_eq!(v["id"], Value::Null, "non-UTF8 after auth reply: {v}");
+        assert!(v["error"].as_str().unwrap().contains("not UTF-8"), "{}", v);
+        writeln!(w, "{}", r#"{"id":2,"method":"ping"}"#).unwrap();
+        reply.clear();
+        let n = r.read_line(&mut reply).unwrap();
+        assert!(n > 0, "connection closed after non-UTF8 after auth, ping got no reply");
+        let v: Value = serde_json::from_str(&reply).unwrap();
+        assert_eq!(v["ok"], true, "ping after non-UTF8 must still be served on the same connection: {v}");
+        assert_eq!(v["result"], "pong");
+        assert_eq!(v["id"], 2);
+    }
 }
