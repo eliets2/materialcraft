@@ -159,7 +159,16 @@ fn distance_transform<const SITES: bool>(w: u32, h: u32, inside: impl Fn(usize) 
             let f: Vec<f32> = (0..h * rep).map(|y| if inside((y % h) * w + x) { 0.0 } else { DISTANCE_INF }).collect();
             let (d, sites) = edt_1d::<SITES>(&f);
             let off = if tile { h } else { 0 };
-            (d[off..off + h].to_vec(), if SITES { sites[off..off + h].to_vec() } else { Vec::new() })
+            let d = d[off..off + h].to_vec();
+            let sites = if SITES {
+                sites[off..off + h]
+                    .iter()
+                    .map(|&sy| if sy == usize::MAX { usize::MAX } else { sy % h })
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            (d, sites)
         })
         .collect();
     // Rows. Carry the chosen column's vertical site through the horizontal transform.
@@ -167,8 +176,28 @@ fn distance_transform<const SITES: bool>(w: u32, h: u32, inside: impl Fn(usize) 
         .into_par_iter()
         .map(|y| {
             let f: Vec<f32> = (0..w * rep).map(|x| cols[x % w].0[y]).collect();
-            let (d, sites) = edt_1d::<SITES>(&f);
+            let (mut d, mut sites) = edt_1d::<SITES>(&f);
             let off = if tile { w } else { 0 };
+            if tile && !d.is_empty() {
+                let orig = d.clone();
+                let orig_sites = sites.clone();
+                for i in 0..w {
+                    let center = off + i;
+                    let prev = center - w;
+                    let next = center + w;
+                    let mut best_at = center;
+                    for &cand in &[prev, next] {
+                        if orig[cand] < orig[best_at] {
+                            best_at = cand;
+                        }
+                    }
+                    d[center] = orig[best_at];
+                    if SITES {
+                        sites[center] = orig_sites[best_at];
+                    }
+                }
+            }
+            let d = d[off..off + w].to_vec();
             let sites = if SITES {
                 sites[off..off + w]
                     .iter()
@@ -178,14 +207,18 @@ fn distance_transform<const SITES: bool>(w: u32, h: u32, inside: impl Fn(usize) 
                         } else {
                             let x = x % w;
                             let sy = cols[x].1[y];
-                            if sy == usize::MAX { usize::MAX } else { (sy % h) * w + x }
+                            if sy == usize::MAX {
+                                usize::MAX
+                            } else {
+                                (sy % h) * w + x
+                            }
                         }
                     })
                     .collect()
             } else {
                 Vec::new()
             };
-            (d[off..off + w].to_vec(), sites)
+            (d, sites)
         })
         .collect();
     drop(cols);
