@@ -8,6 +8,7 @@ use cap_std::ambient_authority;
 use cap_std::fs::{Dir, OpenOptions};
 use serde_json::Value;
 
+use crate::budgets::MAX_INPUT_ENCODED_BYTES;
 use crate::{AutomationError, bad};
 
 /// Upper bound for one automation read, so a hostile path cannot force a multi-gigabyte allocation.
@@ -33,6 +34,12 @@ impl AuthorizedWorkspace {
         let metadata = file.metadata().map_err(|e| file_error("read", path, e))?;
         if !metadata.is_file() {
             return Err(bad(format!("not a regular file: `{path}`")));
+        }
+        if metadata.len() > MAX_INPUT_ENCODED_BYTES as u64 {
+            return Err(bad(format!(
+                "input file `{path}` is {} bytes, over the {MAX_INPUT_ENCODED_BYTES}-byte limit",
+                metadata.len()
+            )));
         }
 
         if metadata.len() > MAX_READ_BYTES {
