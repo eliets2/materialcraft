@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 
 use serde_json::{Value as J, json};
 
-#[cfg(test)]
+#[cfg(any(test, not(target_arch = "wasm32")))]
 use craft_texture::Image;
 use materialcraft_core::ComponentUsage;
 use materialcraft_core::Graph;
@@ -11,8 +11,6 @@ use materialcraft_core::Graph;
 use materialcraft_core::Value;
 use materialcraft_formats::material::{FORMAT, ImageInput, Manifest, MapEntry, Parameter, PresetEntry, VERSION, portable, srgb_usage};
 use materialcraft_formats::{Depth, encode};
-#[cfg(any(test, not(target_arch = "wasm32")))]
-use craft_texture::Image;
 
 #[cfg(not(target_arch = "wasm32"))]
 use crate::commands::u64p;
@@ -199,7 +197,7 @@ fn load_inputs_within(
         let file = file.as_str().ok_or_else(|| bad(cmd, format!("inputs.{id} must be an image path")))?;
         let bytes = read(file).map_err(|e| bad(cmd, e))?;
         let image = materialcraft_formats::decode(&bytes, !srgb_usage(id))?;
-        let decoded = image.w as u64 * image.h as u64 * 16;
+        let decoded = image.width() as u64 * image.height() as u64 * 16;
         total =
             total.checked_add(decoded).filter(|t| *t <= budget).ok_or_else(|| bad(cmd, format!("the inputs decode to more than {budget} bytes in total")))?;
         inputs.insert(id.clone(), image);
@@ -355,7 +353,7 @@ mod tests {
             crate::execute(&mut s, "graph.node.add", &json!({"def": "input_grayscale", "params": {"identifier": "curvature"}})).unwrap();
             crate::execute(&mut s, "graph.node.add", &json!({"def": "input_grayscale", "params": {"identifier": "roughness"}})).unwrap();
             let g = s.graph().unwrap();
-            let png = encode(&Image::filled(4, 4, materialcraft_image::Kind::Gray, [0.7; 4]), "png", Depth::U16, false).unwrap();
+            let png = encode(&Image::filled(4, 4, craft_texture::Kind::Gray, [0.7; 4]), "png", Depth::U16, false).unwrap();
             let read = |_: &str| Ok::<Vec<u8>, String>(png.clone());
             let one_image = 4 * 4 * 16;
 
