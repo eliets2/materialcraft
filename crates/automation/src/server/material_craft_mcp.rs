@@ -379,7 +379,6 @@ mod tests {
         assert!(base.join("m2.mcmat").is_file());
         let _ = std::fs::remove_dir_all(&base);
     }
-    }
 
     #[test]
     fn oversized_replies_become_errors() {
