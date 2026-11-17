@@ -20,6 +20,8 @@ use materialcraft_formats::material::ImageInput;
 #[cfg(not(target_arch = "wasm32"))]
 use materialcraft_formats::material::MATERIAL_EXT;
 use serde_json::{Value as J, json};
+#[cfg(not(target_arch = "wasm32"))]
+use std::io::Read;
 
 pub(crate) fn specs() -> Vec<CommandSpec> {
     vec![
@@ -122,6 +124,11 @@ pub fn material_request(s: &Session, cmd: &str, p: &J) -> Result<(usize, Materia
     Ok((gi, o))
 }
 
+/// Largest encoded input image file read by the material exporter. Decoding and the decoded-image
+/// budget still apply on top of this cap. Matches the automation crate's MAX_INPUT_ENCODED_BYTES.
+#[cfg(not(target_arch = "wasm32"))]
+pub const MAX_INPUT_ENCODED_BYTES: u64 = 16 << 20;
+
 /// Decoded bytes (four f32 channels per pixel) that all `inputs` of one request may hold together:
 /// two 8192 px colour inputs. A request's peak stays near 3 GiB: this budget plus the one image being decoded.
 #[cfg(not(target_arch = "wasm32"))]
@@ -190,7 +197,7 @@ fn export_material(s: &mut Session, p: &J) -> Result<J> {
     let path = if path.to_ascii_lowercase().ends_with(&format!(".{MATERIAL_EXT}")) { path.to_string() } else { format!("{path}.{MATERIAL_EXT}") };
     let gi = publish_graph(s, p)?;
     let (gi, mut o) = material_request(s, CMD, p)?;
-    load_request_inputs(CMD, |f| std::fs::read(f).map_err(|e| format!("{f}: {e}")), s, gi, p, &mut o)?;
+    load_request_inputs(CMD, |f| read_bounded_input(CMD, f), s, gi, p, &mut o)?;
     let bytes = material_bytes(s, gi, &o)?;
     materialcraft_formats::write_atomic(std::path::Path::new(&path), &bytes)?;
     s.log(format!("Exported material {path}"));
@@ -264,10 +271,30 @@ fn bind(s: &mut Session, p: &J) -> Result<J> {
 
 #[cfg(not(target_arch = "wasm32"))]
 fn read_image_file(cmd: &str, path: &str) -> Result<(String, Vec<u8>)> {
-    let bytes = std::fs::read(path).map_err(|e| bad(cmd, format!("{path}: {e}")))?;
+    let bytes = read_bounded_input(cmd, path).map_err(|e| bad(cmd, e))?;
     materialcraft_formats::decode(&bytes, false)?;
     let name = std::path::Path::new(path).file_name().and_then(|f| f.to_str()).unwrap_or("input.png").to_string();
     Ok((name, bytes))
+}
+
+/// Read an image input file with a cap on the encoded size (MAX_INPUT_ENCODED_BYTES).
+/// Checks metadata length and streams with take(limit + 1) to avoid allocating huge buffers.
+#[cfg(not(target_arch = "wasm32"))]
+fn read_bounded_input(_cmd: &str, path: &str) -> std::result::Result<Vec<u8>, String> {
+    let file = std::fs::File::open(path).map_err(|e| format!("{path}: {e}"))?;
+    let metadata = file.metadata().map_err(|e| format!("{path}: {e}"))?;
+    if !metadata.is_file() {
+        return Err(format!("not a regular file: `{path}`"));
+    }
+    if metadata.len() > MAX_INPUT_ENCODED_BYTES {
+        return Err(format!("input file `{path}` is {} bytes, over the {MAX_INPUT_ENCODED_BYTES}-byte limit", metadata.len()));
+    }
+    let mut bytes = Vec::new();
+    file.take(MAX_INPUT_ENCODED_BYTES + 1).read_to_end(&mut bytes).map_err(|e| format!("{path}: {e}"))?;
+    if bytes.len() as u64 > MAX_INPUT_ENCODED_BYTES {
+        return Err(format!("input file `{path}` exceeds the {MAX_INPUT_ENCODED_BYTES}-byte limit"));
+    }
+    Ok(bytes)
 }
 
 #[cfg(target_arch = "wasm32")]
