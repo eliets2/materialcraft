@@ -95,10 +95,7 @@ impl AuthorizedWorkspace {
             return Err(bad(format!("not a regular file: `{path}`")));
         }
         if metadata.len() > MAX_INPUT_ENCODED_BYTES as u64 {
-            return Err(bad(format!(
-                "input file `{path}` is {} bytes, over the {MAX_INPUT_ENCODED_BYTES}-byte limit",
-                metadata.len()
-            )));
+            return Err(bad(format!("input file `{path}` is {} bytes, over the {MAX_INPUT_ENCODED_BYTES}-byte limit", metadata.len())));
         }
 
         if metadata.len() > MAX_READ_BYTES {
