@@ -361,11 +361,19 @@ mod tests {
     #[test]
     fn material_export_rejects_inputs_outside_workspace() {
         let (inside, outside, h) = workspace_session("mat-inputs-escape", true);
-        std::fs::write(outside.join("secret.png"), b"not a png").unwrap();
+        // Declare the curvature input in the graph so the test reaches the path authorization check
+        call(&h, "command.run", json!({"id": "graph.node.add", "params": {"def": "input_grayscale", "params": {"identifier": "curvature"}}})).unwrap();
+        // Write a valid PNG outside the workspace
+        let png = base64::engine::general_purpose::STANDARD
+            .decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==")
+            .unwrap();
+        std::fs::write(outside.join("secret.png"), &png).unwrap();
         let abs = outside.join("secret.png").display().to_string();
         for p in ["../outside/secret.png", "a/../../outside/secret.png", "/tmp/secret.png", "a\\b.png", abs.as_str()] {
             let e = call(&h, "material.export", json!({"path": "m.mcmat", "size": 16, "inputs": {"curvature": p}}));
             assert!(e.is_err(), "accepted input {p:?}");
+            let err = e.unwrap_err();
+            assert!(err.contains("not granted") || err.contains("rejected") || err.contains("outside"), "wrong error for {p:?}: {err}");
         }
         assert_eq!(std::fs::read_dir(&inside).unwrap().count(), 0, "failed exports leave nothing behind");
     }

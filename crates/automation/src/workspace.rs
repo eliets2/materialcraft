@@ -85,7 +85,7 @@ impl AuthorizedWorkspace {
         self.read(&relative.to_str()?.replace('\\', "/")).ok()
     }
 
-    /// Read one regular file below the read root
+    /// Read one regular file below the read root (general read, up to 2 GiB)
     pub fn read(&self, path: &str) -> Result<Vec<u8>, AutomationError> {
         let rel = relative_path(path)?;
         let root = self.read.as_ref().ok_or_else(|| denied("read"))?;
@@ -94,18 +94,37 @@ impl AuthorizedWorkspace {
         if !metadata.is_file() {
             return Err(bad(format!("not a regular file: `{path}`")));
         }
-        if metadata.len() > MAX_INPUT_ENCODED_BYTES as u64 {
-            return Err(bad(format!("input file `{path}` is {} bytes, over the {MAX_INPUT_ENCODED_BYTES}-byte limit", metadata.len())));
-        }
-
         if metadata.len() > MAX_READ_BYTES {
             return Err(bad(format!("file too large: `{path}` is {} bytes (limit {MAX_READ_BYTES})", metadata.len())));
         }
-
         let mut bytes = Vec::new();
         file.take(MAX_READ_BYTES + 1).read_to_end(&mut bytes).map_err(|e| file_error("read", path, e))?;
         if bytes.len() as u64 > MAX_READ_BYTES {
             return Err(bad(format!("file too large: `{path}` exceeds the {MAX_READ_BYTES}-byte limit")));
+        }
+        Ok(bytes)
+    }
+
+    /// Read an image input file for material export, enforcing the 16 MiB encoded-input cap.
+    /// This limits the stream to the encoded cap plus one byte and checks the returned length.
+    pub fn read_input_image(&self, path: &str) -> Result<Vec<u8>, AutomationError> {
+        let rel = relative_path(path)?;
+        let root = self.read.as_ref().ok_or_else(|| denied("read"))?;
+        let file = root.open(&rel).map_err(|e| file_error("read", path, e))?;
+        let metadata = file.metadata().map_err(|e| file_error("read", path, e))?;
+        if !metadata.is_file() {
+            return Err(bad(format!("not a regular file: `{path}`")));
+        }
+        if metadata.len() > MAX_INPUT_ENCODED_BYTES as u64 {
+            return Err(bad(format!("input file `{path}` is {} bytes, over the {MAX_INPUT_ENCODED_BYTES}-byte limit", metadata.len())));
+        }
+        if metadata.len() > MAX_READ_BYTES {
+            return Err(bad(format!("file too large: `{path}` is {} bytes (limit {MAX_READ_BYTES})", metadata.len())));
+        }
+        let mut bytes = Vec::new();
+        file.take(MAX_INPUT_ENCODED_BYTES as u64 + 1).read_to_end(&mut bytes).map_err(|e| file_error("read", path, e))?;
+        if bytes.len() as u64 > MAX_INPUT_ENCODED_BYTES as u64 {
+            return Err(bad(format!("input file `{path}` exceeds the {MAX_INPUT_ENCODED_BYTES}-byte limit")));
         }
 
         Ok(bytes)
