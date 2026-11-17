@@ -378,7 +378,7 @@ mod tests {
             .decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==")
             .unwrap();
         let mut huge = png;
-        huge.extend(std::iter::repeat(0u8).take(32 << 20));
+        huge.extend(std::iter::repeat_n(0u8, 32 << 20));
         std::fs::write(inside.join("huge.png"), &huge).unwrap();
         let r = call(&h, "material.export", json!({"path": "out.mcmat", "size": 16, "inputs": {"curvature": "huge.png"}}));
         assert!(r.is_err(), "oversized in-root input must be rejected: {r:?}");
