@@ -16,6 +16,9 @@ pub const MAX_LOCAL_RENDER_SIDE: u32 = 4096;
 pub const HQ_TRIANGLES: usize = 1_200_000;
 /// Largest reply line read from the app (full-window screenshots are big).
 pub const MAX_BRIDGE_REPLY_BYTES: usize = 64 << 20;
+/// Largest encoded input image file read by the material exporter. Decoding and the decoded-image
+/// budget still apply on top of this cap.
+pub const MAX_INPUT_ENCODED_BYTES: usize = 16 << 20;
 
 /// Serialize compactly, refusing replies over [`MAX_RESPONSE_BYTES`].
 pub fn json_text(v: &impl Serialize) -> Result<String, AutomationError> {

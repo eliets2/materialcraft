@@ -371,6 +371,21 @@ mod tests {
     }
 
     #[test]
+    fn material_export_rejects_oversized_inputs() {
+        let (inside, _, h) = workspace_session("mat-oversized", true);
+        call(&h, "command.run", json!({"id": "graph.node.add", "params": {"def": "input_grayscale", "params": {"identifier": "curvature"}}})).unwrap();
+        let png = base64::engine::general_purpose::STANDARD
+            .decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==")
+            .unwrap();
+        let mut huge = png;
+        huge.extend(std::iter::repeat(0u8).take(32 << 20));
+        std::fs::write(inside.join("huge.png"), &huge).unwrap();
+        let r = call(&h, "material.export", json!({"path": "out.mcmat", "size": 16, "inputs": {"curvature": "huge.png"}}));
+        assert!(r.is_err(), "oversized in-root input must be rejected: {r:?}");
+        assert!(!inside.join("out.mcmat").exists(), "failed export must leave no output file");
+    }
+
+    #[test]
     fn tcp_requires_the_token() {
         use std::io::{BufRead, BufReader};
         let h = Arc::new(session());
