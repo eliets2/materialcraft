@@ -5,9 +5,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use cap_std::ambient_authority;
-use cap_std::fs::{Dir, OpenOptions};
 #[cfg(unix)]
 use cap_std::fs::OpenOptionsExt;
+use cap_std::fs::{Dir, OpenOptions};
 use serde_json::Value;
 
 use crate::budgets::MAX_INPUT_ENCODED_BYTES;

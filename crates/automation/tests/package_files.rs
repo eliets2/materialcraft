@@ -266,9 +266,9 @@ fn read_input_image_rejects_a_fifo_without_blocking_review_regression_1() {
             let _ = tx.send(workspace.read_input_image("input.fifo").map_err(|error| error.to_string()));
         });
         match rx.recv_timeout(std::time::Duration::from_secs(2)) {
-            Ok(Ok(_)) => assert!(false, "read_input_image must reject a FIFO"),
+            Ok(Ok(_)) => panic!("read_input_image must reject a FIFO"),
             Ok(Err(error)) => assert!(error.contains("not a regular file"), "read_input_image must reject a FIFO: {error}"),
-            Err(_) => assert!(false, "read_input_image blocked on a FIFO instead of rejecting it"),
+            Err(_) => panic!("read_input_image blocked on a FIFO instead of rejecting it"),
         }
         let _ = std::fs::remove_dir_all(root);
     }
