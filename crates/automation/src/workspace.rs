@@ -7,7 +7,7 @@ use std::sync::Arc;
 use cap_std::ambient_authority;
 use cap_std::fs::{Dir, OpenOptions};
 #[cfg(unix)]
-use libc::O_NONBLOCK;
+use cap_std::fs::OpenOptionsExt;
 use serde_json::Value;
 
 use crate::budgets::MAX_INPUT_ENCODED_BYTES;
@@ -118,7 +118,7 @@ impl AuthorizedWorkspace {
         let mut options = OpenOptions::new();
         options.read(true);
         #[cfg(unix)]
-        options.custom_flags(O_NONBLOCK);
+        options.custom_flags(rustix::fs::OFlags::NONBLOCK.bits() as i32);
         let file = root.open_with(&rel, &options).map_err(|e| file_error("read", path, e))?;
         let metadata = file.metadata().map_err(|e| file_error("read", path, e))?;
         if !metadata.is_file() {
