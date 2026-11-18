@@ -6,6 +6,8 @@ use std::sync::Arc;
 
 use cap_std::ambient_authority;
 use cap_std::fs::{Dir, OpenOptions};
+#[cfg(unix)]
+use libc::O_NONBLOCK;
 use serde_json::Value;
 
 use crate::budgets::MAX_INPUT_ENCODED_BYTES;
@@ -106,11 +108,18 @@ impl AuthorizedWorkspace {
     }
 
     /// Read an image input file for material export, enforcing the 16 MiB encoded-input cap.
+    /// The file is opened with `O_NONBLOCK` on Unix so a FIFO or other special file in the
+    /// read root cannot block the open (and the RPC loop holding the Headless mutex) until a
+    /// writer appears; the metadata check below then rejects anything that is not a regular file.
     /// This limits the stream to the encoded cap plus one byte and checks the returned length.
     pub fn read_input_image(&self, path: &str) -> Result<Vec<u8>, AutomationError> {
         let rel = relative_path(path)?;
         let root = self.read.as_ref().ok_or_else(|| denied("read"))?;
-        let file = root.open(&rel).map_err(|e| file_error("read", path, e))?;
+        let mut options = OpenOptions::new();
+        options.read(true);
+        #[cfg(unix)]
+        options.custom_flags(O_NONBLOCK);
+        let file = root.open_with(&rel, &options).map_err(|e| file_error("read", path, e))?;
         let metadata = file.metadata().map_err(|e| file_error("read", path, e))?;
         if !metadata.is_file() {
             return Err(bad(format!("not a regular file: `{path}`")));

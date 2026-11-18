@@ -182,3 +182,55 @@ fn scoped_publication_resolves_linked_graphs_and_images_using_the_granted_read_r
         }
     }
 }
+
+#[test]
+fn read_input_image_rejects_a_fifo_without_blocking() {
+    if cfg!(unix) {
+        let root = std::env::temp_dir().join(format!("materialcraft-workspace-fifo-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let fifo = root.join("input.fifo");
+        let status = std::process::Command::new("mkfifo").arg(&fifo).status().expect("mkfifo");
+        assert!(status.success(), "mkfifo failed");
+        let thread_root = root.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let workspace = AuthorizedWorkspace::new(Some(&thread_root), Some(&thread_root)).unwrap();
+            let _ = tx.send(workspace.read_input_image("input.fifo").is_err());
+        });
+        match rx.recv_timeout(std::time::Duration::from_secs(2)) {
+            Ok(rejected) => assert!(rejected, "read_input_image must reject a FIFO"),
+            Err(_) => panic!("read_input_image blocked on a FIFO instead of rejecting it"),
+        }
+        let _ = std::fs::remove_dir_all(root);
+    } else if cfg!(windows) {
+        let root = std::env::temp_dir().join(format!("materialcraft-workspace-fifo-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let pipe_name = format!("materialcraft-fifo-{}", std::process::id());
+        let pipe_path = format!(r"\\.\pipe\{}", pipe_name);
+        let mut server = std::process::Command::new("powershell")
+            .args(["-NoProfile", "-Command", &format!(
+                "$p = New-Object System.IO.Pipes.NamedPipeServerStream('{}', [System.IO.Pipes.PipeDirection]::InOut); $p.WaitForConnection(); Start-Sleep -Seconds 5; $p.Dispose()",
+                pipe_name
+            )])
+            .spawn()
+            .expect("powershell");
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        let thread_root = root.clone();
+        let pipe = pipe_path.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let mut app = Headless::new(Session::new(Package::new("Source")), Filesystem::TrustedLocal);
+            let _ = app.command_run("graph.node.add", json!({"def": "input_grayscale", "params": {"identifier": "curvature"}}));
+            let output = thread_root.join("out.mcmat");
+            let res = app.export_material(&json!({"path": output.to_str().unwrap(), "size": 16, "inputs": {"curvature": pipe}}));
+            let _ = tx.send(res.is_err());
+        });
+        match rx.recv_timeout(std::time::Duration::from_secs(2)) {
+            Ok(rejected) => assert!(rejected, "read_input_image must reject a FIFO"),
+            Err(_) => panic!("read_input_image blocked on a FIFO instead of rejecting it"),
+        }
+        let _ = server.kill();
+        let _ = server.wait();
+        let _ = std::fs::remove_dir_all(root);
+    }
+}
