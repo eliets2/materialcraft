@@ -1,6 +1,6 @@
 //! The headless backend: a [`Session`] plus file I/O and windowless renders. Synchronous and UI-free; the MCP server, the RPC server and the CLI all drive it
 
-use std::fs::{File, OpenOptions};
+use std::fs::OpenOptions;
 use std::io::Read;
 use std::path::Path;
 
@@ -66,7 +66,15 @@ fn read_trusted(path: &str) -> Result<Vec<u8>, AutomationError> {
 
 /// Read a local image input file for material export, enforcing the 16 MiB encoded-input cap.
 fn read_trusted_input(path: &str) -> Result<Vec<u8>, AutomationError> {
-    let file = File::open(path).map_err(|e| AutomationError::Io(format!("cannot read {path}: {e}")))?;
+    let mut options = OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+
+        options.custom_flags(rustix::fs::OFlags::NONBLOCK.bits() as i32);
+    }
+    let file = options.open(path).map_err(|e| AutomationError::Io(format!("cannot read {path}: {e}")))?;
     let metadata = file.metadata().map_err(|e| AutomationError::Io(format!("cannot read {path}: {e}")))?;
     if !metadata.is_file() {
         return Err(bad(format!("not a regular file: `{path}`")));
