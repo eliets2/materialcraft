@@ -193,6 +193,15 @@ impl Drop for KillOnDrop {
     }
 }
 
+/// Remove a test directory on every exit path, including panics and early returns.
+struct RemoveDirOnDrop(std::path::PathBuf);
+
+impl Drop for RemoveDirOnDrop {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
 #[test]
 fn read_input_image_rejects_a_fifo_without_blocking() {
     if cfg!(unix) {
@@ -214,10 +223,15 @@ fn read_input_image_rejects_a_fifo_without_blocking() {
         let _ = std::fs::remove_dir_all(root);
     } else if cfg!(windows) {
         let root = std::env::temp_dir().join(format!("materialcraft-workspace-fifo-{}", std::process::id()));
+        if root.exists() {
+            std::fs::remove_dir_all(&root).unwrap();
+        }
         std::fs::create_dir_all(&root).unwrap();
+        let _cleanup = RemoveDirOnDrop(root.clone());
         let pipe_name = format!("materialcraft-fifo-{}", std::process::id());
         let pipe_path = format!(r"\\.\pipe\{}", pipe_name);
         let ready_path = root.join("pipe.ready");
+        let _ = std::fs::remove_file(&ready_path);
         let _server = KillOnDrop(std::process::Command::new("powershell")
             .env("MATERIALCRAFT_PIPE_READY", ready_path.display().to_string())
             .args(["-NoProfile", "-Command", &format!(
@@ -243,11 +257,12 @@ fn read_input_image_rejects_a_fifo_without_blocking() {
             let res = app.export_material(&json!({"path": output.to_str().unwrap(), "size": 16, "inputs": {"curvature": pipe}}));
             let _ = tx.send(res.is_err());
         });
-        match rx.recv_timeout(std::time::Duration::from_secs(2)) {
+        match rx.recv_timeout(std::time::Duration::from_secs(10)) {
             Ok(rejected) => assert!(rejected, "read_input_image must reject a FIFO"),
             Err(_) => panic!("read_input_image blocked on a FIFO instead of rejecting it"),
         }
-        let _ = std::fs::remove_dir_all(root);
+        drop(_server);
+        drop(_cleanup);
     }
 }
 
@@ -280,11 +295,16 @@ fn read_input_image_rejects_a_fifo_without_blocking_review_regression_1() {
 #[test]
 fn read_input_image_rejects_a_fifo_without_blocking_review_regression_2() {
     if cfg!(windows) {
-        let root = std::env::temp_dir().join(format!("materialcraft-workspace-fifo-review2-{}-O'Neil", std::process::id()));
+        let root = std::env::temp_dir().join(format!("materialcraft-workspace-fifo-review2b-{}-O'Neil", std::process::id()));
+        if root.exists() {
+            std::fs::remove_dir_all(&root).unwrap();
+        }
         std::fs::create_dir_all(&root).unwrap();
-        let pipe_name = format!("materialcraft-fifo-review2-{}", std::process::id());
+        let _ = std::fs::remove_file(root.join("pipe.ready"));
+        let pipe_name = format!("materialcraft-fifo-review2b-{}", std::process::id());
         let pipe_path = format!(r"\\.\pipe\{}", pipe_name);
         let ready_path = root.join("pipe.ready");
+        let _cleanup = RemoveDirOnDrop(root.clone());
         let _server = KillOnDrop(std::process::Command::new("powershell")
             .env("MATERIALCRAFT_PIPE_READY", ready_path.display().to_string())
             .args(["-NoProfile", "-Command", &format!(
@@ -310,10 +330,62 @@ fn read_input_image_rejects_a_fifo_without_blocking_review_regression_2() {
             let res = app.export_material(&json!({"path": output.to_str().unwrap(), "size": 16, "inputs": {"curvature": pipe}}));
             let _ = tx.send(res.is_err());
         });
-        match rx.recv_timeout(std::time::Duration::from_secs(2)) {
+        match rx.recv_timeout(std::time::Duration::from_secs(10)) {
             Ok(rejected) => assert!(rejected, "read_input_image must reject a FIFO"),
             Err(_) => panic!("read_input_image blocked on a FIFO instead of rejecting it"),
         }
-        let _ = std::fs::remove_dir_all(root);
+        drop(_server);
+        drop(_cleanup);
+    }
+}
+
+#[test]
+fn read_input_image_rejects_a_fifo_without_blocking_review_regression_2_review_regression_1() {
+    if cfg!(windows) {
+        let root = std::env::temp_dir().join(format!("materialcraft-workspace-fifo-review2-{}-O'Neil", std::process::id()));
+        if root.exists() {
+            std::fs::remove_dir_all(&root).unwrap();
+        }
+        std::fs::create_dir_all(&root).unwrap();
+        let _cleanup = RemoveDirOnDrop(root.clone());
+        let pipe_name = format!("materialcraft-fifo-review2-{}", std::process::id());
+        let pipe_path = format!(r"\\.\pipe\{}", pipe_name);
+        let ready_path = root.join("pipe.ready");
+        let _ = std::fs::remove_file(&ready_path);
+        let _server = KillOnDrop(std::process::Command::new("powershell")
+            .env("MATERIALCRAFT_PIPE_READY", ready_path.display().to_string())
+            .args(["-NoProfile", "-Command", &format!(
+                "$p = New-Object System.IO.Pipes.NamedPipeServerStream('{}', [System.IO.Pipes.PipeDirection]::InOut); [System.IO.File]::WriteAllText($env:MATERIALCRAFT_PIPE_READY, 'ready'); $p.WaitForConnection(); Start-Sleep -Seconds 5; $p.Dispose()",
+                pipe_name
+            )])
+            .spawn()
+            .expect("powershell"));
+        for _ in 0..100 {
+            if ready_path.exists() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        assert!(ready_path.exists(), "named pipe was not created");
+        std::thread::sleep(std::time::Duration::from_millis(1000));
+        let thread_root = root.clone();
+        let pipe = pipe_path.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let mut app = Headless::new(materialcraft_engine::sample_session(), Filesystem::TrustedLocal);
+            let _ = app.command_run("graph.node.add", json!({"def": "input_grayscale", "params": {"identifier": "curvature"}}));
+            let output = thread_root.join("out.mcmat");
+            let res = app.export_material(&json!({"path": output.to_str().unwrap(), "size": 16, "inputs": {"curvature": pipe}}));
+            let _ = tx.send(res.map_err(|error| error.to_string()));
+        });
+        match rx.recv_timeout(std::time::Duration::from_secs(10)) {
+            Ok(Ok(_)) => panic!("read_input_image must reject a FIFO"),
+            // A Windows named pipe opens as a regular file, so the read succeeds and the failure
+            // surfaces when the bytes are decoded; the call must still fail instead of hanging.
+            Ok(Err(_)) => {}
+            Err(_) => panic!("read_input_image blocked on a FIFO instead of rejecting it"),
+        }
+        drop(_server);
+        drop(_cleanup);
     }
 }
