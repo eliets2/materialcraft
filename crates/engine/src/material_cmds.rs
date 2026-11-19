@@ -11,6 +11,7 @@ use materialcraft_core::Value;
 use materialcraft_formats::Depth;
 #[cfg(test)]
 use materialcraft_formats::encode;
+#[cfg(any(test, not(target_arch = "wasm32")))]
 use materialcraft_formats::material::srgb_usage;
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -59,7 +60,6 @@ pub(crate) fn specs() -> Vec<CommandSpec> {
 }
 
 /// Publish a self-contained source snapshot after checking the selected outputs can cook.
-#[cfg(any(test, not(target_arch = "wasm32")))]
 pub fn material_bytes(session: &Session, graph: usize) -> Result<Vec<u8>> {
     crate::material_bake::check_publish(session, graph)?;
     Ok(materialcraft_formats::material::write_material(&session.pkg, graph)?)
