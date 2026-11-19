@@ -267,7 +267,7 @@ impl Headless {
             &mut options,
             strict,
         )?;
-        let bytes = material_cmds::material_bytes_with_options(&mut self.session, gi, &options)?;
+        let bytes = material_cmds::material_bytes_with_options(&self.session, gi, &options, Some(MAX_EXPORTED_MATERIAL_BYTES))?;
         if bytes.len() as u64 > MAX_EXPORTED_MATERIAL_BYTES {
             return Err(bad(format!("the material is {} bytes (limit {MAX_EXPORTED_MATERIAL_BYTES}); reduce source asset sizes", bytes.len())));
         }

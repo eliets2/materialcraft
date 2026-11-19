@@ -18,6 +18,8 @@ use crate::commands::u64p;
 use crate::commands::{CommandSpec, bad, has_graph, strp};
 use crate::{Result, Session, cmd};
 use materialcraft_core::Graph;
+#[cfg(any(test, not(target_arch = "wasm32")))]
+use materialcraft_core::{MAX_SIZE_LOG2, MIN_SIZE_LOG2};
 use materialcraft_formats::material::ImageInput;
 #[cfg(not(target_arch = "wasm32"))]
 use materialcraft_formats::material::MATERIAL_EXT;
@@ -63,14 +65,21 @@ pub fn material_bytes(session: &Session, graph: usize) -> Result<Vec<u8>> {
     Ok(materialcraft_formats::material::write_material(&session.pkg, graph)?)
 }
 
+/// Cooks the options into a copy of the package, so the live package keeps its size, defaults and
+/// bindings. `maximum_resource_bytes` bounds the source assets before the archive is built.
 #[cfg(any(test, not(target_arch = "wasm32")))]
-pub fn material_bytes_with_options(session: &mut Session, graph: usize, options: &MaterialOptions) -> Result<Vec<u8>> {
+pub fn material_bytes_with_options(session: &Session, graph: usize, options: &MaterialOptions, maximum_resource_bytes: Option<u64>) -> Result<Vec<u8>> {
     crate::material_bake::check_publish(session, graph)?;
+    let mut pkg = session.pkg.clone();
     {
-        let g = session.pkg.graph_mut(graph)?;
+        let g = pkg.graph_mut(graph)?;
         if let Some(size) = options.size {
-            g.size = [size, size];
+            // `Graph.size` stores log2 exponents, as `graph.size` does
+            let exponent = (31 - size.clamp(1, 1 << 20).leading_zeros()).clamp(MIN_SIZE_LOG2, MAX_SIZE_LOG2);
+            g.size = [exponent, exponent];
         }
+        // Text inputs are not portable: the material carries only the numeric and colour inputs
+        g.exposed.retain(|entry| !matches!(entry.default, Value::Text(_)));
         for (id, value) in &options.values {
             if let Some(input) = g.exposed.iter_mut().find(|entry| entry.id == *id) {
                 input.default = value.clone();
@@ -78,17 +87,21 @@ pub fn material_bytes_with_options(session: &mut Session, graph: usize, options:
         }
     }
     for (id, image) in &options.inputs {
-        let bytes = materialcraft_formats::encode(image, "png", Depth::U16, false).map_err(|e| bad("material.export", e.to_string()))?;
-        let resource = crate::file_cmds::push_resource(&mut session.pkg, &format!("{id}.png"), bytes, Some(id));
-        let g = session.pkg.graph_mut(graph)?;
+        let srgb = srgb_usage(id);
+        let bytes = materialcraft_formats::encode(image, "png", Depth::U16, srgb).map_err(|e| bad("material.export", e.to_string()))?;
+        let resource = crate::file_cmds::push_resource(&mut pkg, &format!("{id}.png"), bytes, Some(id));
+        let g = pkg.graph_mut(graph)?;
         g.input_images.insert(id.clone(), resource);
-        if !srgb_usage(id) {
-            g.input_images_linear.insert(id.clone());
-        } else {
+        if srgb {
             g.input_images_linear.remove(id);
+        } else {
+            g.input_images_linear.insert(id.clone());
         }
     }
-    Ok(materialcraft_formats::material::write_material(&session.pkg, graph)?)
+    Ok(match maximum_resource_bytes {
+        Some(limit) => materialcraft_formats::material::write_material_with_resource_limit(&pkg, graph, limit)?,
+        None => materialcraft_formats::material::write_material(&pkg, graph)?,
+    })
 }
 
 /// Publish with an additional budget for the combined uncompressed source assets.
@@ -129,7 +142,10 @@ pub struct MaterialOptions {
 /// `values` as typed exposed input values of graph `g`
 #[cfg(any(test, not(target_arch = "wasm32")))]
 fn values_param(cmd: &str, g: &Graph, p: &J) -> Result<BTreeMap<String, Value>> {
-    let Some(obj) = p.get("values").and_then(J::as_object) else { return Ok(BTreeMap::new()) };
+    let obj = match p.get("values") {
+        None | Some(J::Null) => return Ok(BTreeMap::new()),
+        Some(v) => v.as_object().ok_or_else(|| bad(cmd, "`values` maps input ids to values"))?,
+    };
     obj.iter()
         .map(|(id, v)| {
             let e = g.exposed.iter().find(|e| e.id == *id).ok_or_else(|| bad(cmd, format!("no input `{id}`")))?;
@@ -141,9 +157,7 @@ fn values_param(cmd: &str, g: &Graph, p: &J) -> Result<BTreeMap<String, Value>> 
 
 #[cfg(not(target_arch = "wasm32"))]
 fn graph_param(s: &Session, p: &J) -> Result<usize> {
-    let gi = u64p(p, "graph").map_or(s.graph, |g| g as usize);
-    s.pkg.graph(gi)?;
-    Ok(gi)
+    crate::graph_cmds::graph_index(s, p)
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -223,10 +237,9 @@ fn export_material(s: &mut Session, p: &J) -> Result<J> {
     const CMD: &str = "file.exportMaterial";
     let path = strp(p, "path").ok_or_else(|| bad(CMD, "`path` is required"))?;
     let path = if path.to_ascii_lowercase().ends_with(&format!(".{MATERIAL_EXT}")) { path.to_string() } else { format!("{path}.{MATERIAL_EXT}") };
-    publish_graph(s, p)?;
     let (gi, mut o) = material_request(s, CMD, p)?;
     load_request_inputs(CMD, |f| std::fs::read(f).map_err(|e| format!("{f}: {e}")), s, gi, p, &mut o, false)?;
-    let bytes = material_bytes_with_options(&mut *s, gi, &o)?;
+    let bytes = material_bytes_with_options(&*s, gi, &o, None)?;
     materialcraft_formats::write_atomic(std::path::Path::new(&path), &bytes)?;
     s.log(format!("Exported material {path}"));
     Ok(json!({"path": path, "bytes": bytes.len()}))
@@ -334,10 +347,10 @@ mod bake_tests {
         crate::execute(&mut s, "graph.exposed.add", &json!({"id": "label", "default": {"t": "text", "v": "x"}})).unwrap();
         let values = values_param("t", s.graph().unwrap(), &json!({"values": {"wear": 0.9}})).unwrap();
         let graph = s.graph;
-        let bytes = material_bytes_with_options(&mut s, graph, &MaterialOptions { size: Some(32), values, ..Default::default() }).unwrap();
+        let bytes = material_bytes_with_options(&s, graph, &MaterialOptions { size: Some(32), values, ..Default::default() }, None).unwrap();
         let (pkg, entry) = read_material(&bytes).unwrap();
         let graph = pkg.graph(entry).unwrap();
-        assert_eq!(graph.size, [32, 32]);
+        assert_eq!(graph.size, [5, 5], "sizes are stored as log2 exponents");
         assert!(graph.nodes.iter().any(|node| node.def == "output" && materialcraft_eval::output_usage(node) == "height"));
         let ids: Vec<&str> = graph.exposed.iter().map(|e| e.id.as_str()).collect();
         assert_eq!(ids, ["wear"], "text inputs are not portable");
@@ -403,7 +416,7 @@ mod bake_tests {
         assert!(reopened.graphs[s.graph].input_images_linear.contains("curvature"));
 
         let graph_index = s.graph;
-        let bytes = material_bytes_with_options(&mut s, graph_index, &MaterialOptions { size: Some(16), ..Default::default() }).unwrap();
+        let bytes = material_bytes_with_options(&s, graph_index, &MaterialOptions { size: Some(16), ..Default::default() }, None).unwrap();
         let (pkg, entry) = read_material(&bytes).unwrap();
         let graph = pkg.graph(entry).unwrap();
 
@@ -451,8 +464,8 @@ mod bake_tests {
             let bytes = std::fs::read(&output_path).unwrap();
             let _ = std::fs::remove_dir_all(&dir);
 
-            // The uncompressed archive exposes the normal map after its local file header
-            let name = b"maps/normal.png";
+            // PNG resources are stored uncompressed: the only source resource follows its local file header
+            let name = b"resources/";
             let pos = bytes.windows(name.len()).position(|w| w == name).unwrap();
             let header = pos - 30;
 
