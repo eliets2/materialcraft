@@ -1,15 +1,17 @@
 #[cfg(any(test, not(target_arch = "wasm32")))]
 use std::collections::BTreeMap;
 
-#[cfg(any(test, not(target_arch = "wasm32")))]
-use materialcraft_core::Value;
-use materialcraft_formats::material::srgb_usage;
 #[cfg(test)]
 use craft_texture::Image;
 #[cfg(test)]
 use materialcraft_core::ComponentUsage;
 #[cfg(any(test, not(target_arch = "wasm32")))]
-use materialcraft_formats::{Depth, encode};
+use materialcraft_core::Value;
+use materialcraft_formats::material::srgb_usage;
+#[cfg(any(test, not(target_arch = "wasm32")))]
+use materialcraft_formats::Depth;
+#[cfg(test)]
+use materialcraft_formats::encode;
 
 #[cfg(not(target_arch = "wasm32"))]
 use crate::commands::u64p;
@@ -57,8 +59,37 @@ pub(crate) fn specs() -> Vec<CommandSpec> {
 }
 
 /// Publish a self-contained source snapshot after checking the selected outputs can cook.
+#[cfg(any(test, not(target_arch = "wasm32")))]
 pub fn material_bytes(session: &Session, graph: usize) -> Result<Vec<u8>> {
     crate::material_bake::check_publish(session, graph)?;
+    Ok(materialcraft_formats::material::write_material(&session.pkg, graph)?)
+}
+
+#[cfg(any(test, not(target_arch = "wasm32")))]
+pub fn material_bytes_with_options(session: &mut Session, graph: usize, options: &MaterialOptions) -> Result<Vec<u8>> {
+    crate::material_bake::check_publish(session, graph)?;
+    {
+        let g = session.pkg.graph_mut(graph)?;
+        if let Some(size) = options.size {
+            g.size = [size, size];
+        }
+        for (id, value) in &options.values {
+            if let Some(input) = g.exposed.iter_mut().find(|entry| entry.id == *id) {
+                input.default = value.clone();
+            }
+        }
+    }
+    for (id, image) in &options.inputs {
+        let bytes = materialcraft_formats::encode(image, "png", Depth::U16, false).map_err(|e| bad("material.export", e.to_string()))?;
+        let resource = crate::file_cmds::push_resource(&mut session.pkg, &format!("{id}.png"), bytes, Some(id));
+        let g = session.pkg.graph_mut(graph)?;
+        g.input_images.insert(id.clone(), resource);
+        if !srgb_usage(id) {
+            g.input_images_linear.insert(id.clone());
+        } else {
+            g.input_images_linear.remove(id);
+        }
+    }
     Ok(materialcraft_formats::material::write_material(&session.pkg, graph)?)
 }
 
@@ -142,7 +173,7 @@ pub fn load_inputs(
     read: impl Fn(&str) -> std::result::Result<Vec<u8>, String>,
     g: &Graph,
     p: &J,
-    inputs: &mut BTreeMap<String, Image>,
+    inputs: &mut BTreeMap<String, craft_texture::Image>,
 ) -> Result<()> {
     load_inputs_within(cmd, read, g, p, inputs, MAX_INPUT_DECODED_BYTES)
 }
@@ -153,7 +184,7 @@ fn load_inputs_within(
     read: impl Fn(&str) -> std::result::Result<Vec<u8>, String>,
     g: &Graph,
     p: &J,
-    inputs: &mut BTreeMap<String, Image>,
+    inputs: &mut BTreeMap<String, craft_texture::Image>,
     budget: u64,
 ) -> Result<()> {
     let entries = match p.get("inputs") {
@@ -195,10 +226,10 @@ fn export_material(s: &mut Session, p: &J) -> Result<J> {
     const CMD: &str = "file.exportMaterial";
     let path = strp(p, "path").ok_or_else(|| bad(CMD, "`path` is required"))?;
     let path = if path.to_ascii_lowercase().ends_with(&format!(".{MATERIAL_EXT}")) { path.to_string() } else { format!("{path}.{MATERIAL_EXT}") };
-    let gi = publish_graph(s, p)?;
+    publish_graph(s, p)?;
     let (gi, mut o) = material_request(s, CMD, p)?;
     load_request_inputs(CMD, |f| read_bounded_input(CMD, f), s, gi, p, &mut o)?;
-    let bytes = material_bytes(s, gi, &o)?;
+    let bytes = material_bytes_with_options(&mut *s, gi, &o)?;
     materialcraft_formats::write_atomic(std::path::Path::new(&path), &bytes)?;
     s.log(format!("Exported material {path}"));
     Ok(json!({"path": path, "bytes": bytes.len()}))
@@ -220,7 +251,7 @@ pub fn texturecraft_library() -> std::path::PathBuf {
 fn send_to_texturecraft(s: &mut Session, p: &J) -> Result<J> {
     const CMD: &str = "file.sendToTextureCraft";
     let gi = publish_graph(s, p)?;
-    let bytes = material_bytes(s, gi)?;
+    let bytes = material_bytes(&mut *s, gi)?;
     let dir = texturecraft_library();
     std::fs::create_dir_all(&dir).map_err(|e| bad(CMD, format!("{}: {e}", dir.display())))?;
     let path = dir.join(format!("{}.{MATERIAL_EXT}", materialcraft_formats::safe_file_name(&s.pkg.graph(gi)?.name)));
@@ -311,7 +342,6 @@ fn unbind(s: &mut Session, p: &J) -> Result<J> {
 }
 
 #[cfg(test)]
-#[cfg(test)]
 #[path = "material_cmds.test.rs"]
 mod tests;
 
@@ -326,20 +356,23 @@ mod bake_tests {
         crate::execute(&mut s, "graph.exposed.add", &json!({"id": "wear", "default": 0.5})).unwrap();
         crate::execute(&mut s, "graph.exposed.add", &json!({"id": "label", "default": {"t": "text", "v": "x"}})).unwrap();
         let values = values_param("t", s.graph().unwrap(), &json!({"values": {"wear": 0.9}})).unwrap();
-        let bytes = material_bytes(&s, s.graph, &MaterialOptions { size: Some(32), values, ..Default::default() }).unwrap();
-        let (m, source) = read_material(&bytes).unwrap();
-        assert_eq!(m.size, [32, 32]);
-        assert!(m.maps.iter().any(|entry| entry.usage == "height" && entry.color_space == "linear"));
-        let ids: Vec<&str> = m.parameters.iter().map(|p| p.param.id.as_str()).collect();
+        let graph = s.graph;
+        let bytes = material_bytes_with_options(&mut s, graph, &MaterialOptions { size: Some(32), values, ..Default::default() }).unwrap();
+        let (pkg, entry) = read_material(&bytes).unwrap();
+        let graph = pkg.graph(entry).unwrap();
+        assert_eq!(graph.size, [32, 32]);
+        assert!(graph.nodes.iter().any(|node| node.def == "output" && materialcraft_eval::output_usage(node) == "height"));
+        let ids: Vec<&str> = graph.exposed.iter().map(|e| e.id.as_str()).collect();
         assert_eq!(ids, ["wear"], "text inputs are not portable");
-        assert_eq!(m.parameters[0].value, Value::Float(0.9), "the manifest carries the cooked value");
+        assert_eq!(graph.exposed[0].default, Value::Float(0.9), "the manifest carries the cooked value");
+        let source = materialcraft_formats::sbs::write_sbs(&pkg).unwrap();
         assert_eq!(
-            materialcraft_formats::sbs::read_sbs(&source, "source.sbs", &|_| None).unwrap().pkg.graphs[s.graph].input_value("wear"),
+            materialcraft_formats::sbs::read_sbs(&source, "source.sbs", &|_| None).unwrap().pkg.graphs[entry].input_value("wear"),
             Some(&Value::Float(0.9))
         );
         // The source package opens again, on the material's graph, with no file to save over
         crate::file_cmds::open_bytes(&mut s, &bytes, Some("x.mcmat".into())).unwrap();
-        assert_eq!(s.graph().unwrap().name, m.graph);
+        assert_eq!(s.graph().unwrap().name, pkg.graph(entry).unwrap().name);
         assert!(s.path.is_none());
     }
 
@@ -390,10 +423,12 @@ mod bake_tests {
         assert_eq!(reopened.graphs[s.graph].input_images.get("curvature"), Some(&res));
         assert!(reopened.graphs[s.graph].input_images_linear.contains("curvature"));
 
-        let bytes = material_bytes(&s, s.graph, &MaterialOptions { size: Some(16), ..Default::default() }).unwrap();
-        let (m, _) = read_material(&bytes).unwrap();
+        let graph_index = s.graph;
+        let bytes = material_bytes_with_options(&mut s, graph_index, &MaterialOptions { size: Some(16), ..Default::default() }).unwrap();
+        let (pkg, entry) = read_material(&bytes).unwrap();
+        let graph = pkg.graph(entry).unwrap();
 
-        assert!(m.inputs.iter().any(|i| i.identifier == "curvature" && i.kind == "gray"));
+        assert!(graph.nodes.iter().any(|node| node.def == "input_grayscale" && materialcraft_eval::identifier(node) == "curvature"));
         assert_eq!(crate::execute(&mut s, "graph.input.unbind", &json!({"identifier": "curvature"})).unwrap(), J::Bool(true));
         assert!(s.graph().unwrap().input_images.is_empty());
         assert!(s.graph().unwrap().input_images_linear.is_empty());

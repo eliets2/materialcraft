@@ -360,7 +360,7 @@ mod tests {
 
     #[test]
     fn material_export_rejects_inputs_outside_workspace() {
-        let (inside, outside, h) = workspace_session("mat-inputs-escape", true);
+        let (inside, outside, h) = workspace_session(std::path::Path::new("mat-inputs-escape"), true);
         // Declare the curvature input in the graph so the test reaches the path authorization check
         call(&h, "command.run", json!({"id": "graph.node.add", "params": {"def": "input_grayscale", "params": {"identifier": "curvature"}}})).unwrap();
         // Write a valid PNG outside the workspace
@@ -380,7 +380,7 @@ mod tests {
 
     #[test]
     fn material_export_rejects_oversized_inputs() {
-        let (inside, _, h) = workspace_session("mat-oversized", true);
+        let (inside, _, h) = workspace_session(std::path::Path::new("mat-oversized"), true);
         call(&h, "command.run", json!({"id": "graph.node.add", "params": {"def": "input_grayscale", "params": {"identifier": "curvature"}}})).unwrap();
         let png = base64::engine::general_purpose::STANDARD
             .decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==")

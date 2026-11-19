@@ -24,4 +24,3 @@ pub struct MaterialExportParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub inputs: Option<Value>,
 }
-}
