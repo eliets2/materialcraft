@@ -160,16 +160,15 @@ fn relink_keeps_higher_numbered_dynamic_input_with_gap() {
     let levels = node(&mut s, "levels");
     let processor = node(&mut s, "value_processor");
     let output = node(&mut s, "output");
-    // Numbered image inputs exist only while a wire feeds them, so the higher
-    // port is connected first; input1 stays empty as the gap.
+    // A numbered image input is offered only after the one before it is wired, so input1 is
+    // wired to make input2 available and released again: input1 stays empty as the gap.
     connect(&mut s, image, levels, "input");
-    connect(&mut s, levels, processor, "input2");
     connect(&mut s, image, processor, "input0");
+    connect(&mut s, image, processor, "input1");
+    connect(&mut s, levels, processor, "input2");
+    run(&mut s, "graph.disconnect", json!({"to": processor, "toPort": "input1"}));
     connect(&mut s, processor, output, "input");
     run(&mut s, "graph.select", json!({"ids": [levels]}));
     run(&mut s, "edit.deleteRelink", json!({}));
-    assert_eq!(
-        s.graph().unwrap().input_of(NodeId(processor), "input2").unwrap().from,
-        NodeId(image)
-    );
+    assert_eq!(s.graph().unwrap().input_of(NodeId(processor), "input2").unwrap().from, NodeId(image));
 }

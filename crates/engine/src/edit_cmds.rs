@@ -244,8 +244,8 @@ fn delete_relink(s: &mut Session, p: &J) -> Result<J> {
                 let entry = port.and_then(|port| graph.input_of(*id, port)).map(|c| (c.from, c.from_port.clone()));
                 sources.insert(*id, entry);
             }
-        let outs: BTreeMap<NodeId, Vec<(NodeId, String)>> =
-            graph.connections.iter().filter(|c| id_set.contains(&c.from)).map(|c| (c.from, (c.to, c.to_port.clone()))).fold(
+            let outs: BTreeMap<NodeId, Vec<(NodeId, String)>> =
+                graph.connections.iter().filter(|c| id_set.contains(&c.from)).map(|c| (c.from, (c.to, c.to_port.clone()))).fold(
                     BTreeMap::new(),
                     |mut map, (from, to)| {
                         map.entry(from).or_default().push(to);
@@ -286,13 +286,8 @@ fn delete_relink(s: &mut Session, p: &J) -> Result<J> {
                 resolved.insert(node, terminal.clone());
             }
         }
-        let mut surviving_connections: Vec<Connection> = s
-            .graph()?
-            .connections
-            .iter()
-            .filter(|c| !id_set.contains(&c.from) && !id_set.contains(&c.to))
-            .cloned()
-            .collect();
+        let mut surviving_connections: Vec<Connection> =
+            s.graph()?.connections.iter().filter(|c| !id_set.contains(&c.from) && !id_set.contains(&c.to)).cloned().collect();
 
         // Stage each replacement before validating it, so dynamic numbered
         // destination ports (recomputed from connections) survive: the
@@ -314,18 +309,15 @@ fn delete_relink(s: &mut Session, p: &J) -> Result<J> {
 
                 let wire_idx = {
                     let g = s.graph()?;
-                    g.connections.iter().position(|c| {
-                        id_set.contains(&c.from) && c.to == *to && c.to_port == *to_port
-                    })
+                    g.connections.iter().position(|c| id_set.contains(&c.from) && c.to == *to && c.to_port == *to_port)
                 };
 
                 let graph_len = s.graph().map(|g| g.connections.len()).unwrap_or(0);
-                let in_place = wire_idx.map(|idx| idx < graph_len).unwrap_or(false);
+                let in_place = wire_idx.filter(|idx| *idx < graph_len);
 
                 let saved_selection = s.selection.clone();
                 s.selection.clear();
-                let valid = crate::connection_commands::validate_connection(s, source, &port, *to, to_port)
-                    .is_ok();
+                let valid = crate::connection_commands::validate_connection(s, source, &port, *to, to_port).is_ok();
                 s.selection = saved_selection;
 
                 if !valid {
@@ -334,27 +326,18 @@ fn delete_relink(s: &mut Session, p: &J) -> Result<J> {
 
                 // Apply the replacement only after validation has used the
                 // pre-deletion destination port.
-                if in_place {
-                    let idx = wire_idx.unwrap();
+                if let Some(idx) = in_place {
                     let g = s.graph_mut()?;
-                    g.connections[idx].from = source;
-                    g.connections[idx].from_port = port.clone();
+                    if let Some(connection) = g.connections.get_mut(idx) {
+                        connection.from = source;
+                        connection.from_port = port.clone();
+                    }
                 } else {
                     let g = s.graph_mut()?;
-                    g.connections.push(Connection {
-                        from: source,
-                        from_port: port.clone(),
-                        to: *to,
-                        to_port: to_port.clone(),
-                    });
+                    g.connections.push(Connection { from: source, from_port: port.clone(), to: *to, to_port: to_port.clone() });
                 }
 
-                surviving_connections.push(Connection {
-                    from: source,
-                    from_port: port.clone(),
-                    to: *to,
-                    to_port: to_port.clone(),
-                });
+                surviving_connections.push(Connection { from: source, from_port: port.clone(), to: *to, to_port: to_port.clone() });
             }
         }
 
@@ -364,5 +347,3 @@ fn delete_relink(s: &mut Session, p: &J) -> Result<J> {
         Ok(json!({"deleted": ids.len()}))
     })
 }
-
-
