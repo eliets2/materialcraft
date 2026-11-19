@@ -206,7 +206,9 @@ impl Drop for RemoveDirOnDrop {
 fn read_input_image_rejects_a_fifo_without_blocking() {
     if cfg!(unix) {
         let root = std::env::temp_dir().join(format!("materialcraft-workspace-fifo-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
+        let _cleanup = RemoveDirOnDrop(root.clone());
         let fifo = root.join("input.fifo");
         let status = std::process::Command::new("mkfifo").arg(&fifo).status().expect("mkfifo");
         assert!(status.success(), "mkfifo failed");
@@ -220,7 +222,6 @@ fn read_input_image_rejects_a_fifo_without_blocking() {
             Ok(rejected) => assert!(rejected, "read_input_image must reject a FIFO"),
             Err(_) => panic!("read_input_image blocked on a FIFO instead of rejecting it"),
         }
-        let _ = std::fs::remove_dir_all(root);
     } else if cfg!(windows) {
         let root = std::env::temp_dir().join(format!("materialcraft-workspace-fifo-{}", std::process::id()));
         if root.exists() {

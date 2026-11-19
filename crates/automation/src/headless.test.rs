@@ -54,6 +54,20 @@ mod end_merge_tests {
     }
 
     #[test]
+    fn trusted_input_reads_are_not_capped_at_the_sandbox_input_limit() {
+        let dir = std::env::temp_dir().join(format!("materialcraft-trusted-input-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let large = dir.join("large.bin");
+        let size = crate::budgets::MAX_INPUT_ENCODED_BYTES as u64 + 1;
+        std::fs::File::create(&large).unwrap().set_len(size).unwrap();
+        let h = Headless::new(Headless::default_session(), Filesystem::TrustedLocal);
+        let bytes = h.read_input_image(large.to_str().unwrap()).expect("a trusted input above the sandbox cap must still load");
+        assert_eq!(bytes.len() as u64, size);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
     fn two_param_requests_are_two_undo_steps() {
         let mut h = Headless::new(Headless::default_session(), Filesystem::TrustedLocal);
         h.command_run("file.new", json!({"template": "empty"})).unwrap();

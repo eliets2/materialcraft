@@ -10,7 +10,7 @@ use materialcraft_engine::{Session, commands, file_cmds, inspect, material_cmds}
 use materialcraft_render::{Lighting, Maps, Scene, Settings};
 use serde_json::{Value, json};
 
-use crate::budgets::{HQ_TRIANGLES, MAX_INPUT_ENCODED_BYTES, MAX_LOCAL_RENDER_SIDE, MAX_PNG_SIDE, check_png, encode_png};
+use crate::budgets::{HQ_TRIANGLES, MAX_LOCAL_RENDER_SIDE, MAX_PNG_SIDE, check_png, encode_png};
 use crate::workspace::{MAX_READ_BYTES, authorize_command};
 use crate::{AutomationError, bad};
 pub use crate::{Filesystem, RenderOptions, Rendered};
@@ -61,32 +61,6 @@ fn read_trusted(path: &str) -> Result<Vec<u8>, AutomationError> {
         return Err(bad(format!("file too large: `{path}` exceeds the {MAX_READ_BYTES}-byte limit")));
     }
 
-    Ok(bytes)
-}
-
-/// Read a local image input file for material export, enforcing the 16 MiB encoded-input cap.
-fn read_trusted_input(path: &str) -> Result<Vec<u8>, AutomationError> {
-    let mut options = OpenOptions::new();
-    options.read(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-
-        options.custom_flags(rustix::fs::OFlags::NONBLOCK.bits() as i32);
-    }
-    let file = options.open(path).map_err(|e| AutomationError::Io(format!("cannot read {path}: {e}")))?;
-    let metadata = file.metadata().map_err(|e| AutomationError::Io(format!("cannot read {path}: {e}")))?;
-    if !metadata.is_file() {
-        return Err(bad(format!("not a regular file: `{path}`")));
-    }
-    if metadata.len() > MAX_INPUT_ENCODED_BYTES as u64 {
-        return Err(bad(format!("input file `{path}` is {} bytes, over the {MAX_INPUT_ENCODED_BYTES}-byte limit", metadata.len())));
-    }
-    let mut bytes = Vec::new();
-    file.take(MAX_INPUT_ENCODED_BYTES as u64 + 1).read_to_end(&mut bytes).map_err(|e| AutomationError::Io(format!("cannot read {path}: {e}")))?;
-    if bytes.len() as u64 > MAX_INPUT_ENCODED_BYTES as u64 {
-        return Err(bad(format!("input file `{path}` exceeds the {MAX_INPUT_ENCODED_BYTES}-byte limit")));
-    }
     Ok(bytes)
 }
 
@@ -283,11 +257,17 @@ impl Headless {
         }
 
         let (gi, mut options) = material_cmds::material_request(&self.session, "material.export", p)?;
-        material_cmds::load_request_inputs("material.export", |f| self.read_input_image(f).map_err(|e| e.to_string()), &self.session, gi, p, &mut options)?;
+        let strict = !self.trusted();
+        material_cmds::load_request_inputs(
+            "material.export",
+            |f| self.read_input_image(f).map_err(|e| e.to_string()),
+            &self.session,
+            gi,
+            p,
+            &mut options,
+            strict,
+        )?;
         let bytes = material_cmds::material_bytes_with_options(&mut self.session, gi, &options)?;
-        if !self.trusted() && bytes.len() as u64 > MAX_EXPORTED_MATERIAL_BYTES {
-            return Err(bad(format!("the material is {} bytes (limit {MAX_EXPORTED_MATERIAL_BYTES}); reduce source asset sizes", bytes.len())));
-        }
         if bytes.len() as u64 > MAX_EXPORTED_MATERIAL_BYTES {
             return Err(bad(format!("the material is {} bytes (limit {MAX_EXPORTED_MATERIAL_BYTES}); reduce source asset sizes", bytes.len())));
         }
@@ -296,11 +276,12 @@ impl Headless {
         Ok(json!({"path": path, "bytes": bytes.len()}))
     }
 
-    /// Read an image input file for material export, enforcing the 16 MiB encoded-input cap.
+    /// Read an image input file for material export. Sandboxed reads take the workspace's 16 MiB
+    /// encoded-input cap; trusted reads keep the general read bound.
     fn read_input_image(&self, path: &str) -> Result<Vec<u8>, AutomationError> {
         match &self.fs {
             Filesystem::Denied => Err(bad("file access is not granted: start the server with --read-root <dir>")),
-            Filesystem::TrustedLocal => read_trusted_input(path),
+            Filesystem::TrustedLocal => read_trusted(path),
             Filesystem::Workspace(w) => w.read_input_image(path),
         }
     }
