@@ -152,3 +152,24 @@ fn relink_cycle_between_deleted_nodes_does_not_relink() {
     run(&mut s, "edit.deleteRelink", json!({}));
     assert!(s.graph().unwrap().input_of(NodeId(output), "input").is_none());
 }
+
+#[test]
+fn relink_keeps_higher_numbered_dynamic_input_with_gap() {
+    let mut s = new_session();
+    let image = node(&mut s, "uniform");
+    let levels = node(&mut s, "levels");
+    let processor = node(&mut s, "value_processor");
+    let output = node(&mut s, "output");
+    // Numbered image inputs exist only while a wire feeds them, so the higher
+    // port is connected first; input1 stays empty as the gap.
+    connect(&mut s, image, levels, "input");
+    connect(&mut s, levels, processor, "input2");
+    connect(&mut s, image, processor, "input0");
+    connect(&mut s, processor, output, "input");
+    run(&mut s, "graph.select", json!({"ids": [levels]}));
+    run(&mut s, "edit.deleteRelink", json!({}));
+    assert_eq!(
+        s.graph().unwrap().input_of(NodeId(processor), "input2").unwrap().from,
+        NodeId(image)
+    );
+}
