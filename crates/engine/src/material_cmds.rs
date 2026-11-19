@@ -251,7 +251,7 @@ pub fn texturecraft_library() -> std::path::PathBuf {
 fn send_to_texturecraft(s: &mut Session, p: &J) -> Result<J> {
     const CMD: &str = "file.sendToTextureCraft";
     let gi = publish_graph(s, p)?;
-    let bytes = material_bytes(&mut *s, gi)?;
+    let bytes = material_bytes(&*s, gi)?;
     let dir = texturecraft_library();
     std::fs::create_dir_all(&dir).map_err(|e| bad(CMD, format!("{}: {e}", dir.display())))?;
     let path = dir.join(format!("{}.{MATERIAL_EXT}", materialcraft_formats::safe_file_name(&s.pkg.graph(gi)?.name)));
