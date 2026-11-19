@@ -7,11 +7,11 @@ use craft_texture::Image;
 use materialcraft_core::ComponentUsage;
 #[cfg(any(test, not(target_arch = "wasm32")))]
 use materialcraft_core::Value;
-use materialcraft_formats::material::srgb_usage;
 #[cfg(any(test, not(target_arch = "wasm32")))]
 use materialcraft_formats::Depth;
 #[cfg(test)]
 use materialcraft_formats::encode;
+use materialcraft_formats::material::srgb_usage;
 
 #[cfg(not(target_arch = "wasm32"))]
 use crate::commands::u64p;
